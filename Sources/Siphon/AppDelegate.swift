@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var headerItem: NSMenuItem!
     private var obstructionItem: NSMenuItem!
     private var customServerItem: NSMenuItem!
+    private var copyExportsItem: NSMenuItem!
     private var reapplyItem: NSMenuItem!
     private var serverItems: [NSMenuItem] = []
     /// 54x24 down to 43x19 — proportionate to a menu row.
@@ -43,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // on the item so the keyboard path works; the custom view forwards row
         // clicks to the same selector, since AppKit does not fire an item's
         // action for clicks inside its view.
-        headerItem = NSMenuItem(title: "", action: #selector(toggleProxy), keyEquivalent: "p")
+        headerItem = NSMenuItem(title: "", action: #selector(toggleProxy), keyEquivalent: "s")
         headerItem.target = self
         headerItem.view = makeHeaderRow()
         menu.addItem(headerItem)
@@ -63,6 +64,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         customServerItem.target = self
         menu.addItem(customServerItem)
         menu.addItem(.separator())
+
+        copyExportsItem = NSMenuItem(title: "Copy Shell Exports",
+                                     action: #selector(copyExports), keyEquivalent: "c")
+        copyExportsItem.target = self
+        copyExportsItem.image = NSImage(systemSymbolName: "doc.on.doc",
+                                        accessibilityDescription: "Copy")
+        copyExportsItem.toolTip = "Copy http_proxy / https_proxy / no_proxy exports for a "
+            + "terminal. System proxy settings don't reach curl, git or pip — they read these "
+            + "variables — so the exceptions configured on this service are carried across too."
+        menu.addItem(copyExportsItem)
 
         reapplyItem = NSMenuItem(title: "Auto Re-apply",
                                  action: #selector(toggleReapply), keyEquivalent: "")
@@ -173,6 +184,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.resolveObstruction()
     }
 
+    /// Exports for the server actually in force, falling back to the selection
+    /// when the proxy is off — a terminal is often proxied while the system is
+    /// not.
+    @objc private func copyExports() {
+        guard let server = controller.activeServer ?? controller.server else { return }
+        let commands = ShellExports.commands(for: server,
+                                             exceptions: controller.current?.exceptions ?? [])
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(commands, forType: .string)
+    }
+
     @objc private func toggleReapply() {
         controller.reapplyOnNetworkChange.toggle()
     }
@@ -267,6 +289,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         headerSwitch.isEnabled = controller.canToggle
 
         headerItem.isEnabled = controller.canToggle
+        copyExportsItem.isEnabled = (controller.activeServer ?? controller.server) != nil
         refreshObstructionItem()
         refreshServerItems()
         reapplyItem.state = controller.reapplyOnNetworkChange ? .on : .off
