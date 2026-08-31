@@ -6,6 +6,8 @@ and keeps pointing it there when the default route moves.
 It replaces a shell script that had to be re-run by hand after every VPN connect
 or drop.
 
+![Siphon's menu, with the proxy on](docs/screenshot.png)
+
 ## Features
 
 - **Native everything**: an `NSStatusItem` with a real `NSMenu` — no Dock icon,
@@ -142,6 +144,12 @@ scutil <<< "show State:/Network/Global/IPv4"      # which service owns the route
 - A proxy dictionary value containing a literal backslash can't be expressed in
   `scutil`'s command language. Siphon reports such keys rather than mangling
   them.
+
+## Notes on the screenshot
+
+It is the app's own menu, captured live — not a mock-up. The server names are
+examples: the capture runs against a throwaway defaults suite with discovery
+switched off, so no hostname from the machine that took it can appear.
 
 ## License
 
