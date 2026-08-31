@@ -53,10 +53,17 @@ public final class ProxyController {
         return UserDefaults(suiteName: defaultsDomain) ?? .standard
     }
 
+    /// Discovery reads the proxies configured on this Mac. Off, the menu lists
+    /// only what has been added explicitly — which is how the README screenshot
+    /// is produced without a real hostname in it.
+    private let discoversServers: Bool
+
     public init(defaults: UserDefaults = ProxyController.sharedDefaults(),
-                runner: PrivilegeRunner = PrivilegeRunner()) {
+                runner: PrivilegeRunner = PrivilegeRunner(),
+                discoversServers: Bool = true) {
         self.defaults = defaults
         self.runner = runner
+        self.discoversServers = discoversServers
     }
 
     // MARK: - Persisted settings
@@ -131,8 +138,10 @@ public final class ProxyController {
     /// why no site-specific hostname appears in Siphon's source.
     private func refreshServers() {
         var servers = customServers
-        for discovered in NetworkState.discoverServers() where !servers.contains(discovered) {
-            servers.append(discovered)
+        if discoversServers {
+            for discovered in NetworkState.discoverServers() where !servers.contains(discovered) {
+                servers.append(discovered)
+            }
         }
         if let server, !servers.contains(server) { servers.insert(server, at: 0) }
         knownServers = servers

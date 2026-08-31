@@ -2,7 +2,12 @@ import AppKit
 import SiphonCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private let controller = ProxyController()
+    private let controller: ProxyController
+
+    init(controller: ProxyController = ProxyController()) {
+        self.controller = controller
+        super.init()
+    }
 
     private var statusItem: NSStatusItem!
     private var headerIconView: NSImageView!
@@ -18,7 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var serverItems: [NSMenuItem] = []
     /// 54x24 down to 43x19 — proportionate to a menu row.
     private static let switchScale: CGFloat = 0.8
-    private var menu: NSMenu!
+    /// Internal so the screenshot harness can pop up the real menu.
+    var menu: NSMenu!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         controller.onChange = { [weak self] in self?.refreshUI() }
