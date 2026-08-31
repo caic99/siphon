@@ -8,11 +8,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var headerIconView: NSImageView!
     private var headerTitleLabel: NSTextField!
     private var headerSubtitleLabel: NSTextField!
+    private var headerSwitch: NSSwitch!
     private var obstructionItem: NSMenuItem!
     private var toggleItem: NSMenuItem!
     private var customServerItem: NSMenuItem!
     private var reapplyItem: NSMenuItem!
     private var serverItems: [NSMenuItem] = []
+    /// 54x24 down to 43x19 — proportionate to a menu row.
+    private static let switchScale: CGFloat = 0.8
     private var menu: NSMenu!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -36,7 +39,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Custom view so the header renders in solid label color instead of the
         // dimmed look AppKit forces on disabled items.
         let header = NSMenuItem()
-        header.isEnabled = false
+        // Enabled on purpose: AppKit dims a disabled item's custom view, and
+        // that is what drains the accent colour out of the switch. Nothing is
+        // wired to the row itself — the switch inside it handles the click.
+        header.isEnabled = true
         header.view = makeHeaderRow()
         menu.addItem(header)
 
@@ -82,31 +88,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func makeHeaderRow() -> NSView {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 36))
+        let width: CGFloat = 300, height: CGFloat = 36, margin: CGFloat = 14
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
 
-        let icon = NSImageView(frame: NSRect(x: 14, y: 9, width: 18, height: 18))
+        let icon = NSImageView(frame: NSRect(x: margin, y: 9, width: 18, height: 18))
         icon.imageScaling = .scaleProportionallyUpOrDown
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
         icon.contentTintColor = .labelColor
         container.addSubview(icon)
 
+        // The switch is placed first and measured, not guessed at: its size
+        // varies by macOS version, and the labels are then given exactly the
+        // room that remains so they truncate instead of running underneath it.
+        let toggle = NSSwitch()
+        toggle.target = self
+        toggle.action = #selector(headerSwitchFlipped(_:))
+        toggle.setAccessibilityLabel("Proxy")
+        toggle.sizeToFit()
+
+        // NSSwitch ignores controlSize — it is a fixed 54x24 at every setting,
+        // which is chunky next to 13pt menu text. Scaling the view's unit square
+        // shrinks the frame while the switch keeps drawing into its full 54x24
+        // bounds, so the artwork stays vector-sharp rather than being a
+        // resampled bitmap.
+        let natural = toggle.frame.size
+        toggle.scaleUnitSquare(to: NSSize(width: Self.switchScale, height: Self.switchScale))
+        let switchSize = NSSize(width: (natural.width * Self.switchScale).rounded(),
+                                height: (natural.height * Self.switchScale).rounded())
+        toggle.setFrameSize(switchSize)
+        toggle.setFrameOrigin(NSPoint(x: width - switchSize.width - margin,
+                                      y: ((height - switchSize.height) / 2).rounded()))
+        container.addSubview(toggle)
+
+        let textX: CGFloat = 38
+        let textWidth = toggle.frame.minX - 10 - textX
+
         let title = NSTextField(labelWithString: "")
         title.font = .systemFont(ofSize: 13)
         title.textColor = .labelColor
         title.lineBreakMode = .byTruncatingTail
-        title.frame = NSRect(x: 38, y: 18, width: 250, height: 16)
+        title.frame = NSRect(x: textX, y: 18, width: textWidth, height: 16)
         container.addSubview(title)
 
         let subtitle = NSTextField(labelWithString: "")
         subtitle.font = .systemFont(ofSize: 11)
         subtitle.textColor = .secondaryLabelColor
         subtitle.lineBreakMode = .byTruncatingTail
-        subtitle.frame = NSRect(x: 38, y: 4, width: 250, height: 13)
+        subtitle.frame = NSRect(x: textX, y: 4, width: textWidth, height: 13)
         container.addSubview(subtitle)
 
         headerIconView = icon
         headerTitleLabel = title
         headerSubtitleLabel = subtitle
+        headerSwitch = toggle
         return container
     }
 
@@ -125,6 +159,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleProxy() {
         controller.toggle()
+    }
+
+    /// The switch shows live state, so it is not the source of truth — flipping
+    /// it asks for a change, and refreshUI snaps it back to whatever the Mac
+    /// actually ends up reporting.
+    @objc private func headerSwitchFlipped(_ sender: NSSwitch) {
+        controller.setOn(sender.state == .on)
     }
 
     @objc private func resolveObstruction() {
@@ -209,14 +250,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             headerTitleLabel.stringValue = "No Network"
             headerSubtitleLabel.stringValue = "Nothing owns the default route"
         } else if active {
-            let server = controller.activeServer.map { " — \($0.display)" } ?? ""
-            headerTitleLabel.stringValue = "Proxy On\(server)"
+            headerTitleLabel.stringValue = "Proxy On"
             headerSubtitleLabel.stringValue = subtitleDetail()
         } else {
             headerTitleLabel.stringValue = obstruction == nil ? "Proxy Off" : "Proxy Off — Not Applied"
             headerSubtitleLabel.stringValue = subtitleDetail()
         }
         headerSubtitleLabel.toolTip = controller.primary?.displayName
+        headerSwitch.state = active ? .on : .off
+        headerSwitch.isEnabled = controller.canToggle
 
         refreshObstructionItem()
         refreshToggleItem()

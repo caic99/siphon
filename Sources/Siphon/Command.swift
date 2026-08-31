@@ -7,6 +7,8 @@ enum Command {
     static let usage = """
     Siphon — menu bar proxy switch
 
+      --server H[:P]  select a proxy server (port defaults to 3128), then exit
+                      unless combined with --on
       --on        route the current network service through the selected proxy
       --off       turn the proxy off, here and on any service Siphon proxied
       --toggle    flip whichever way the current service is set
@@ -33,13 +35,26 @@ enum Command {
         controller.onError = { failure = $0 }
         controller.refresh()
 
+        // Parity with the shell script's `[host] [port]` arguments.
+        var selectedExplicitly = false
+        if let flag = arguments.firstIndex(of: "--server") {
+            guard arguments.indices.contains(flag + 1),
+                  let server = ProxyServer.parse(arguments[flag + 1]) else {
+                FileHandle.standardError.write(
+                    Data("--server needs a host, optionally host:port\n".utf8))
+                return 1
+            }
+            controller.select(server)
+            selectedExplicitly = true
+        }
+
         if arguments.contains("--on") {
             controller.setOn(true)
         } else if arguments.contains("--off") {
             controller.setOn(false)
         } else if arguments.contains("--toggle") {
             controller.toggle()
-        } else {
+        } else if !selectedExplicitly {
             return nil
         }
 

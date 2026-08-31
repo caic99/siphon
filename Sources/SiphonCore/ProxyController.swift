@@ -39,7 +39,22 @@ public final class ProxyController {
     public private(set) var obstruction: Obstruction?
     public private(set) var knownServers: [ProxyServer] = []
 
-    public init(defaults: UserDefaults = .standard, runner: PrivilegeRunner = PrivilegeRunner()) {
+    /// Both the .app and the bare binary must read the same switch position;
+    /// an unbundled process would otherwise get its own domain keyed on the
+    /// executable name, so `--on` and the menu would disagree. Passing the
+    /// bundle identifier as a suite name is a no-op inside the bundle (it
+    /// already is that domain) and redirects the unbundled case onto it.
+    public static let defaultsDomain = "com.chucai.siphon"
+
+    /// Inside the app bundle this domain already *is* `standard`; passing it as
+    /// a suite name there is a no-op AppKit logs a complaint about.
+    public static func sharedDefaults() -> UserDefaults {
+        if Bundle.main.bundleIdentifier == defaultsDomain { return .standard }
+        return UserDefaults(suiteName: defaultsDomain) ?? .standard
+    }
+
+    public init(defaults: UserDefaults = ProxyController.sharedDefaults(),
+                runner: PrivilegeRunner = PrivilegeRunner()) {
         self.defaults = defaults
         self.runner = runner
     }
@@ -121,9 +136,12 @@ public final class ProxyController {
         }
         if let server, !servers.contains(server) { servers.insert(server, at: 0) }
         knownServers = servers
-        // First run: adopt whatever this service is already pointed at, rather
-        // than an unrelated proxy that merely sorted first.
-        if server == nil { server = current?.server ?? servers.first }
+        // First run: adopt what this service is already pointed at. Waiting for
+        // a service beats guessing from an unrelated discovered proxy that
+        // merely sorted first.
+        if server == nil, let current {
+            server = current.server ?? servers.first
+        }
     }
 
     // MARK: - Commands from the UI

@@ -68,9 +68,12 @@ public enum ProxyPolicy {
             guard let server else { return .unavailable }
             if current.isOn {
                 if current.server == server { return .satisfied }
-                if !serviceIsOurs, trigger == .automatic {
-                    return .foreignProxy(current.server)
-                }
+                // A proxy is already working here under a different server.
+                // Swapping it is a decision, not a reconciliation — including on
+                // a service Siphon set up earlier, because the stored selection
+                // can drift (an empty first launch adopts whatever it can see).
+                // Re-applying must only ever turn a proxy *on*, never move one.
+                guard trigger == .userClick else { return .foreignProxy(current.server) }
             }
             return gated(.enable(server))
         }
