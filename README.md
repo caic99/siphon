@@ -28,7 +28,8 @@ or drop.
   `sudo` is available. Otherwise the menu bar icon turns orange and waits for
   a click, so an admin dialog never appears unprompted.
 - **No hard-coded servers**: the menu lists the proxies already configured on
-  this Mac, plus anything you add under **Custom…**.
+  this Mac, plus every one you have used or added under **Custom…** — so
+  switching away from a server does not lose it.
 
 ## Build & run
 
@@ -47,6 +48,7 @@ System Settings → General → Login Items.
 Siphon keeps the shell script's scriptability. These run headlessly and exit:
 
 ```bash
+Siphon --server H[:P]   # pick a proxy server; applies at once if already on
 Siphon --on        # route the current service through the selected proxy
 Siphon --off       # turn it off, here and on any service Siphon proxied
 Siphon --toggle    # flip whichever way the current service is set
