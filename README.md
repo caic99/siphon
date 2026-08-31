@@ -78,11 +78,12 @@ sudo is available.
 
 ## Keys
 
-While the menu is open: **⌘C** copies the shell exports, **⌘Q** quits.
+While the menu is open: **⌘S** toggles the proxy, **⌘C** copies the shell
+exports, **⌘R** toggles auto re-apply, **⌘Q** quits.
 
-The proxy is toggled by the switch, or by clicking anywhere on the header row.
-It has no key equivalent: AppKit does not honour one on a menu item that uses a
-custom view, and the header needs a custom view to host the switch.
+⌘S lives on the *Turn Proxy On/Off* row rather than the header, because AppKit
+does not honour a key equivalent on a menu item that uses a custom view — and
+the header needs one to host the switch. The header still toggles on a click.
 
 ## How it works
 

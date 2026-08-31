@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var headerSubtitleLabel: NSTextField!
     private var headerSwitch: NSSwitch!
     private var headerItem: NSMenuItem!
+    private var toggleItem: NSMenuItem!
     private var obstructionItem: NSMenuItem!
     private var customServerItem: NSMenuItem!
     private var copyExportsItem: NSMenuItem!
@@ -62,6 +63,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(obstructionItem)
         menu.addItem(.separator())
 
+        // The header toggles too, but a menu item with a custom view cannot
+        // carry a key equivalent, so ⌘S needs a plain row to live on.
+        toggleItem = NSMenuItem(title: "Turn Proxy On", action: #selector(toggleProxy),
+                                keyEquivalent: "s")
+        toggleItem.target = self
+        menu.addItem(toggleItem)
+        menu.addItem(.separator())
+
         menu.addItem(Self.sectionHeader("Proxy Server"))
         customServerItem = NSMenuItem(title: "Custom…", action: #selector(addCustomServer),
                                       keyEquivalent: "")
@@ -79,7 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(copyExportsItem)
 
         reapplyItem = NSMenuItem(title: "Auto Re-apply",
-                                 action: #selector(toggleReapply), keyEquivalent: "")
+                                 action: #selector(toggleReapply), keyEquivalent: "r")
         reapplyItem.target = self
         reapplyItem.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath",
                                     accessibilityDescription: "Re-apply")
@@ -291,6 +300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         headerSwitch.isEnabled = controller.canToggle
 
         headerItem.isEnabled = controller.canToggle
+        refreshToggleItem()
         copyExportsItem.isEnabled = (controller.activeServer ?? controller.server) != nil
         refreshObstructionItem()
         refreshServerItems()
@@ -313,6 +323,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case nil:
             return primary.name
         }
+    }
+
+    /// Labelled from the live state, not the switch, so the row always says what
+    /// clicking it will actually do to the Mac.
+    private func refreshToggleItem() {
+        let active = controller.isProxyActive
+        toggleItem.title = active ? "Turn Proxy Off" : "Turn Proxy On"
+        toggleItem.image = NSImage(systemSymbolName: active ? "stop.circle" : "play.circle",
+                                   accessibilityDescription: active ? "Turn off" : "Turn on")
+        toggleItem.isEnabled = controller.canToggle
     }
 
     private func refreshObstructionItem() {
