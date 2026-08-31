@@ -28,9 +28,16 @@ or drop.
   `sudo` is available. Otherwise the menu bar icon turns orange and waits for
   a click, so an admin dialog never appears unprompted.
 - **Copies terminal exports** (⌘C): system proxy settings don't reach curl, git
-  or pip — they read environment variables. The copied block carries the
-  service's own exception list across as `no_proxy`, so a shell bypasses what
-  the rest of the system bypasses.
+  or pip — they read environment variables.
+
+  ```sh
+  export HTTP_PROXY=http://proxy.example.com:3128
+  export HTTPS_PROXY=http://proxy.example.com:3128
+  ```
+
+  Note that `curl` ignores the uppercase `HTTP_PROXY` on purpose — its httpoxy
+  mitigation — so plain-`http://` requests through curl are not proxied by this
+  block. `HTTPS_PROXY` is honoured, as are both by most other tools.
 - **No hard-coded servers**: the menu lists the proxies already configured on
   this Mac, plus every one you have used or added under **Custom…** — so
   switching away from a server does not lose it.
@@ -71,8 +78,11 @@ sudo is available.
 
 ## Keys
 
-While the menu is open: **⌘S** toggles the proxy, **⌘C** copies the shell
-exports, **⌘Q** quits.
+While the menu is open: **⌘C** copies the shell exports, **⌘Q** quits.
+
+The proxy is toggled by the switch, or by clicking anywhere on the header row.
+It has no key equivalent: AppKit does not honour one on a menu item that uses a
+custom view, and the header needs a custom view to host the switch.
 
 ## How it works
 
