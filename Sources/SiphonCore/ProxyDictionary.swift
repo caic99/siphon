@@ -88,18 +88,6 @@ public struct ProxyDictionary: Equatable, Sendable {
         return ProxyServer(host: host, port: port)
     }
 
-    /// Hosts the system is configured not to proxy.
-    public var exceptions: [String] {
-        guard case .array(let values)? = entries["ExceptionsList"] else { return [] }
-        return values
-    }
-
-    /// macOS's "Exclude simple hostnames" checkbox — single-label hosts bypass
-    /// the proxy.
-    public var excludesSimpleHostnames: Bool {
-        entries["ExcludeSimpleHostnames"] == .number(1)
-    }
-
     // MARK: - Editing
 
     public func enabling(_ server: ProxyServer) -> ProxyDictionary {

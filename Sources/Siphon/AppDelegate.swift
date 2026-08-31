@@ -44,7 +44,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // on the item so the keyboard path works; the custom view forwards row
         // clicks to the same selector, since AppKit does not fire an item's
         // action for clicks inside its view.
-        headerItem = NSMenuItem(title: "", action: #selector(toggleProxy), keyEquivalent: "s")
+        // No key equivalent: AppKit does not honour one on an item with a custom
+        // view (measured — the delegate hook and the view's own
+        // performKeyEquivalent are not consulted either), and the header needs
+        // a custom view for the switch.
+        headerItem = NSMenuItem(title: "", action: #selector(toggleProxy), keyEquivalent: "")
         headerItem.target = self
         headerItem.view = makeHeaderRow()
         menu.addItem(headerItem)
@@ -70,9 +74,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         copyExportsItem.target = self
         copyExportsItem.image = NSImage(systemSymbolName: "doc.on.doc",
                                         accessibilityDescription: "Copy")
-        copyExportsItem.toolTip = "Copy http_proxy / https_proxy / no_proxy exports for a "
-            + "terminal. System proxy settings don't reach curl, git or pip — they read these "
-            + "variables — so the exceptions configured on this service are carried across too."
+        copyExportsItem.toolTip = "Copy HTTP_PROXY / HTTPS_PROXY exports for a terminal. "
+            + "System proxy settings don't reach curl, git or pip — they read these variables."
         menu.addItem(copyExportsItem)
 
         reapplyItem = NSMenuItem(title: "Auto Re-apply",
@@ -189,8 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// not.
     @objc private func copyExports() {
         guard let server = controller.activeServer ?? controller.server else { return }
-        let commands = ShellExports.commands(for: server,
-                                             exceptions: controller.current?.exceptions ?? [])
+        let commands = ShellExports.commands(for: server)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(commands, forType: .string)
     }

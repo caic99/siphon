@@ -38,8 +38,7 @@ enum Command {
                 FileHandle.standardError.write(Data("no proxy server known\n".utf8))
                 return 1
             }
-            print(ShellExports.commands(for: server,
-                                        exceptions: controller.current?.exceptions ?? []))
+            print(ShellExports.commands(for: server))
             return 0
         }
 
