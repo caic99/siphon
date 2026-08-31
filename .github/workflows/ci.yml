@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags needed: make-app.sh derives the version from git describe
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Test
+        run: swift test
+
+      - name: Assemble .app bundle
+        run: ./make-app.sh
+
+      - name: Verify bundle
+        run: |
+          test -x build/Siphon.app/Contents/MacOS/Siphon
+          plutil -lint build/Siphon.app/Contents/Info.plist
+          codesign --verify --verbose build/Siphon.app
+
+      - name: Zip app
+        run: ditto -c -k --keepParent build/Siphon.app build/Siphon.app.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Siphon.app
+          path: build/Siphon.app.zip
+          retention-days: 14
