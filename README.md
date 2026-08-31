@@ -27,6 +27,10 @@ or drop.
 - **No password surprises**: automatic re-apply runs only when passwordless
   `sudo` is available. Otherwise the menu bar icon turns orange and waits for
   a click, so an admin dialog never appears unprompted.
+- **Copies terminal exports** (⌘C): system proxy settings don't reach curl, git
+  or pip — they read environment variables. The copied block carries the
+  service's own exception list across as `no_proxy`, so a shell bypasses what
+  the rest of the system bypasses.
 - **No hard-coded servers**: the menu lists the proxies already configured on
   this Mac, plus every one you have used or added under **Custom…** — so
   switching away from a server does not lose it.
@@ -48,6 +52,7 @@ System Settings → General → Login Items.
 Siphon keeps the shell script's scriptability. These run headlessly and exit:
 
 ```bash
+Siphon --exports   # shell exports:  eval "$(Siphon --exports)"
 Siphon --server H[:P]   # pick a proxy server; applies at once if already on
 Siphon --on        # route the current service through the selected proxy
 Siphon --off       # turn it off, here and on any service Siphon proxied
@@ -63,6 +68,11 @@ sudo is available.
 ```bash
 ./build/Siphon.app/Contents/MacOS/Siphon --probe
 ```
+
+## Keys
+
+While the menu is open: **⌘S** toggles the proxy, **⌘C** copies the shell
+exports, **⌘Q** quits.
 
 ## How it works
 

@@ -13,6 +13,7 @@ enum Command {
       --on        route the current network service through the selected proxy
       --off       turn the proxy off, here and on any service Siphon proxied
       --toggle    flip whichever way the current service is set
+      --exports   print shell proxy exports; eval "$(Siphon --exports)"
       --probe     report what Siphon sees, change nothing
       --help      this message
 
@@ -28,6 +29,17 @@ enum Command {
         }
         if arguments.contains("--probe") {
             Probe.run()
+            return 0
+        }
+        if arguments.contains("--exports") {
+            let controller = ProxyController()
+            controller.refresh()
+            guard let server = controller.activeServer ?? controller.server else {
+                FileHandle.standardError.write(Data("no proxy server known\n".utf8))
+                return 1
+            }
+            print(ShellExports.commands(for: server,
+                                        exceptions: controller.current?.exceptions ?? []))
             return 0
         }
 
