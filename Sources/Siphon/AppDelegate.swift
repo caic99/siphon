@@ -9,8 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var headerTitleLabel: NSTextField!
     private var headerSubtitleLabel: NSTextField!
     private var headerSwitch: NSSwitch!
+    private var headerItem: NSMenuItem!
     private var obstructionItem: NSMenuItem!
-    private var toggleItem: NSMenuItem!
     private var customServerItem: NSMenuItem!
     private var reapplyItem: NSMenuItem!
     private var serverItems: [NSMenuItem] = []
@@ -38,13 +38,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Custom view so the header renders in solid label color instead of the
         // dimmed look AppKit forces on disabled items.
-        let header = NSMenuItem()
-        // Enabled on purpose: AppKit dims a disabled item's custom view, and
-        // that is what drains the accent colour out of the switch. Nothing is
-        // wired to the row itself — the switch inside it handles the click.
-        header.isEnabled = true
-        header.view = makeHeaderRow()
-        menu.addItem(header)
+        // The header *is* the toggle: the switch, a click anywhere else on the
+        // row, and ⌘P all do the same thing. The action and key equivalent live
+        // on the item so the keyboard path works; the custom view forwards row
+        // clicks to the same selector, since AppKit does not fire an item's
+        // action for clicks inside its view.
+        headerItem = NSMenuItem(title: "", action: #selector(toggleProxy), keyEquivalent: "p")
+        headerItem.target = self
+        headerItem.view = makeHeaderRow()
+        menu.addItem(headerItem)
 
         // Only shown when the live state and the switch disagree.
         obstructionItem = NSMenuItem(title: "", action: #selector(resolveObstruction),
@@ -53,12 +55,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         obstructionItem.image = NSImage(systemSymbolName: "exclamationmark.arrow.circlepath",
                                         accessibilityDescription: "Apply")
         menu.addItem(obstructionItem)
-        menu.addItem(.separator())
-
-        toggleItem = NSMenuItem(title: "Turn Proxy On", action: #selector(toggleProxy),
-                                keyEquivalent: "p")
-        toggleItem.target = self
-        menu.addItem(toggleItem)
         menu.addItem(.separator())
 
         menu.addItem(Self.sectionHeader("Proxy Server"))
@@ -89,7 +85,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func makeHeaderRow() -> NSView {
         let width: CGFloat = 300, height: CGFloat = 36, margin: CGFloat = 14
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        let container = ClickableView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        // Clicks that land on the switch never reach here — it consumes them —
+        // so this only covers the rest of the row.
+        container.onClick = { [weak self] in self?.toggleProxy() }
 
         let icon = NSImageView(frame: NSRect(x: margin, y: 9, width: 18, height: 18))
         icon.imageScaling = .scaleProportionallyUpOrDown
@@ -260,8 +259,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         headerSwitch.state = active ? .on : .off
         headerSwitch.isEnabled = controller.canToggle
 
+        headerItem.isEnabled = controller.canToggle
         refreshObstructionItem()
-        refreshToggleItem()
         refreshServerItems()
         reapplyItem.state = controller.reapplyOnNetworkChange ? .on : .off
     }
@@ -306,16 +305,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// Labelled from the live state, not the switch, so the row always describes
-    /// what clicking it will actually do to the Mac.
-    private func refreshToggleItem() {
-        let active = controller.isProxyActive
-        toggleItem.title = active ? "Turn Proxy Off" : "Turn Proxy On"
-        toggleItem.image = NSImage(systemSymbolName: active ? "stop.circle" : "play.circle",
-                                   accessibilityDescription: active ? "Turn off" : "Turn on")
-        toggleItem.isEnabled = controller.canToggle
-    }
-
     private func refreshServerItems() {
         for item in serverItems { menu.removeItem(item) }
         serverItems = []
@@ -330,5 +319,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.insertItem(item, at: insertionIndex + offset)
             serverItems.append(item)
         }
+    }
+}
+
+/// A menu-row view that reports plain clicks. Menu items with custom views do
+/// not fire their own action, so the row would otherwise be inert everywhere
+/// except on the switch.
+private final class ClickableView: NSView {
+    var onClick: (() -> Void)?
+
+    override func mouseUp(with event: NSEvent) {
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        onClick?()
     }
 }

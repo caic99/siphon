@@ -141,7 +141,13 @@ public final class ProxyController {
         // merely sorted first.
         if server == nil, let current {
             server = current.server ?? servers.first
+            if let server { remember(server) }
         }
+    }
+
+    private func remember(_ newServer: ProxyServer) {
+        guard !customServers.contains(newServer) else { return }
+        customServers.append(newServer)
     }
 
     // MARK: - Commands from the UI
@@ -176,9 +182,11 @@ public final class ProxyController {
 
     public func select(_ newServer: ProxyServer) {
         server = newServer
-        if !customServers.contains(newServer), !NetworkState.discoverServers().contains(newServer) {
-            customServers.append(newServer)
-        }
+        // Remember every server that gets used, not just typed-in ones.
+        // Discovery only sees what is configured *now*, so switching away from
+        // a server would otherwise drop it off the menu and there would be no
+        // way back to it except retyping it under Custom….
+        remember(newServer)
         refreshServers()
         if desiredOn {
             finish(reconcile(trigger: .userClick), revertingTo: desiredOn)

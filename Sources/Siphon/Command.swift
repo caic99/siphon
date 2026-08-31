@@ -7,8 +7,9 @@ enum Command {
     static let usage = """
     Siphon — menu bar proxy switch
 
-      --server H[:P]  select a proxy server (port defaults to 3128), then exit
-                      unless combined with --on
+      --server H[:P]  select a proxy server (port defaults to 3128). Applies
+                      right away if the proxy is already on, like picking one
+                      from the menu does
       --on        route the current network service through the selected proxy
       --off       turn the proxy off, here and on any service Siphon proxied
       --toggle    flip whichever way the current service is set
