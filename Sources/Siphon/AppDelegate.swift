@@ -64,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(customServerItem)
         menu.addItem(.separator())
 
-        reapplyItem = NSMenuItem(title: "Re-apply on Network Change",
+        reapplyItem = NSMenuItem(title: "Auto Re-apply",
                                  action: #selector(toggleReapply), keyEquivalent: "")
         reapplyItem.target = self
         reapplyItem.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath",
@@ -84,7 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func makeHeaderRow() -> NSView {
-        let width: CGFloat = 300, height: CGFloat = 36, margin: CGFloat = 14
+        // 225pt is what the server rows impose anyway, so the header costs
+        // nothing at this width — and the service name fits without clipping.
+        let width: CGFloat = 225, height: CGFloat = 36, margin: CGFloat = 14
         let container = ClickableView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         // Clicks that land on the switch never reach here — it consumes them —
         // so this only covers the rest of the row.
@@ -252,11 +254,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             headerTitleLabel.stringValue = "Proxy On"
             headerSubtitleLabel.stringValue = subtitleDetail()
         } else {
-            headerTitleLabel.stringValue = obstruction == nil ? "Proxy Off" : "Proxy Off — Not Applied"
+            headerTitleLabel.stringValue = "Proxy Off"
             headerSubtitleLabel.stringValue = subtitleDetail()
         }
         headerSubtitleLabel.toolTip = controller.primary?.displayName
-        headerSwitch.state = active ? .on : .off
+        // NSSwitch animates its own knob when clicked, and animates programmatic
+        // changes only through the animator proxy. Re-assigning a state it
+        // already holds cancels the in-flight animation, which is what made
+        // clicking it snap.
+        let desired: NSControl.StateValue = active ? .on : .off
+        if headerSwitch.state != desired { headerSwitch.animator().state = desired }
         headerSwitch.isEnabled = controller.canToggle
 
         headerItem.isEnabled = controller.canToggle
@@ -269,16 +276,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// needs more. The service always stays available in the tooltip.
     private func subtitleDetail() -> String {
         guard let primary = controller.primary else { return "" }
+        // Kept short: this line sets the menu's width, and the full service
+        // name and interface stay in the tooltip.
         switch controller.obstruction {
         case .awaitingUser:
-            return "Needs your password · \(primary.name)"
-        case .foreignProxy(let existing):
-            let host = existing?.host ?? "Another proxy"
-            return "\(host) was set outside Siphon"
+            return "Needs your password"
+        case .foreignProxy:
+            return "Set outside Siphon"
         case .failed:
-            return "Couldn't apply · \(primary.name)"
+            return "Couldn't apply"
         case nil:
-            return primary.displayName
+            return primary.name
         }
     }
 
@@ -310,12 +318,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         serverItems = []
 
         guard let insertionIndex = menu.items.firstIndex(of: customServerItem) else { return }
-        for (offset, server) in controller.knownServers.enumerated() {
-            let item = NSMenuItem(title: server.display, action: #selector(selectServer(_:)),
+        let servers = controller.knownServers
+        let labels = ServerLabels.labels(for: servers)
+        for (offset, server) in servers.enumerated() {
+            let label = labels[offset]
+            let item = NSMenuItem(title: label, action: #selector(selectServer(_:)),
                                   keyEquivalent: "")
             item.target = self
             item.representedObject = server
             item.state = server == controller.server ? .on : .off
+            // The row is shortened for width; the tooltip keeps the whole name.
+            item.toolTip = label == server.display ? nil : server.display
             menu.insertItem(item, at: insertionIndex + offset)
             serverItems.append(item)
         }
