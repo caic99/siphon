@@ -30,4 +30,10 @@ final class PrimaryServiceTests: XCTestCase {
         let service = PrimaryService(serviceID: "DEF", interface: "en7", name: "USB LAN")
         XCTAssertEqual(service.displayName, "USB LAN (en7)")
     }
+
+    /// A tunnel's name falls back to its interface; saying it twice is noise.
+    func testDisplayNameDoesNotRepeatTheInterface() {
+        let tunnel = PrimaryService(serviceID: "ABC", interface: "utun4", name: "utun4")
+        XCTAssertEqual(tunnel.displayName, "utun4")
+    }
 }

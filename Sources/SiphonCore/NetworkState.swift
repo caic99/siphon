@@ -24,7 +24,11 @@ public struct PrimaryService: Equatable, Sendable {
         "\(isTunnel ? "State" : "Setup"):/Network/Service/\(serviceID)/Proxies"
     }
 
-    public var displayName: String { "\(name) (\(interface))" }
+    /// Tunnels have no Setup: entry, so `name` falls back to the interface —
+    /// naming it twice would just be noise.
+    public var displayName: String {
+        name == interface ? name : "\(name) (\(interface))"
+    }
 
     public static func isTunnelInterface(_ interface: String) -> Bool {
         ["utun", "ppp", "tun", "tap"].contains { interface.hasPrefix($0) }
