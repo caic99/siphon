@@ -26,6 +26,13 @@ enum Probe {
         print("discovered servers: "
               + (discovered.isEmpty ? "none" : discovered.map(\.display).joined(separator: ", ")))
 
+        let controller = ProxyController()
+        controller.refresh()
+        print("selected server: \(controller.server?.display ?? "none")")
+        print("menu would list:  "
+              + controller.knownServers.map { $0 == controller.server ? "[\($0.display)]" : $0.display }
+                  .joined(separator: ", "))
+
         let runner = PrivilegeRunner()
         let path = primary.isTunnel ? "/usr/sbin/scutil" : "/usr/sbin/networksetup"
         print("passwordless sudo for \(path): \(runner.canRunSilently([path]))")

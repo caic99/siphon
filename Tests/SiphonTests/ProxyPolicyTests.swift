@@ -66,8 +66,26 @@ final class ProxyPolicyTests: XCTestCase {
                        .write(.enable(ours)))
     }
 
-    func testChangingServerRewritesOurOwnService() {
+    /// Regression: automatic re-apply used to rewrite the server on any service
+    /// Siphon had touched. A drifted selection then silently moved a working
+    /// proxy to a different host on the next network change. Re-applying may
+    /// turn a proxy on; it may never move one.
+    func testAutomaticApplyNeverSwapsTheServerOnALiveProxy() {
         XCTAssertEqual(plan(desiredOn: true, current: dictionary(on: true, server: theirs),
+                            serviceIsOurs: true),
+                       .foreignProxy(theirs))
+    }
+
+    func testAClickChangesServerOnOurOwnService() {
+        XCTAssertEqual(plan(desiredOn: true, current: dictionary(on: true, server: theirs),
+                            serviceIsOurs: true, trigger: .userClick),
+                       .write(.enable(ours)))
+    }
+
+    /// Re-applying to a service whose proxy is *off* is the whole point, and
+    /// stays automatic.
+    func testAutomaticApplyStillTurnsAnOffProxyOn() {
+        XCTAssertEqual(plan(desiredOn: true, current: dictionary(on: false, server: theirs),
                             serviceIsOurs: true),
                        .write(.enable(ours)))
     }
