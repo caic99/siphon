@@ -8,9 +8,9 @@
 `toggle-vpn-proxy.sh` flips the HTTP/HTTPS proxy on whichever network service owns
 the default route. It works, but it has to be run from a terminal, it reports state
 only as stdout prose, and it must be re-run by hand after every network change — the
-default route moves whenever the VPN connects or drops.
+default route moves whenever a different service takes it over.
 
-It also has a bug. On the VPN path it rebuilds the service's `Proxies` dictionary
+It also has a bug. On the tunnel path it rebuilds the service's `Proxies` dictionary
 with `d.init` … `set`, which replaces the dictionary wholesale and discards every
 key it does not write: `ExceptionsList`, `ExcludeSimpleHostnames`, `FTPPassive`,
 `SOCKS*`. Real services on this Mac carry all of those.

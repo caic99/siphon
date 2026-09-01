@@ -12,7 +12,7 @@ public enum SCValue: Equatable, Sendable {
 /// Siphon owns exactly six keys — the HTTP and HTTPS enable flags, hosts, and
 /// ports — and carries everything else through untouched: exception lists,
 /// `ExcludeSimpleHostnames`, `FTPPassive`, SOCKS. The shell script this app
-/// replaces rebuilt the dictionary from scratch on the VPN path and dropped all
+/// replaces rebuilt the dictionary from scratch on the tunnel path and dropped all
 /// of it.
 public struct ProxyDictionary: Equatable, Sendable {
     public private(set) var entries: [String: SCValue]

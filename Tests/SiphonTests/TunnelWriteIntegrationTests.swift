@@ -1,9 +1,9 @@
 import XCTest
 @testable import SiphonCore
 
-/// Exercises the privileged `scutil` path end to end — the branch a VPN takes,
-/// which cannot be reached from unit tests and only runs live when a tunnel owns
-/// the default route.
+/// Exercises the privileged `scutil` path end to end — the branch tunnel
+/// interfaces take, which cannot be reached from unit tests and only runs live
+/// when a tunnel owns the default route.
 ///
 /// Writes to a dynamic-store key for a service ID that does not exist, so
 /// nothing on the machine is affected, and removes it afterwards. Needs
@@ -34,7 +34,7 @@ final class TunnelWriteIntegrationTests: XCTestCase {
         return NetworkState.proxies(forKey: target.proxyKey)
     }
 
-    /// What a VPN pushes before Siphon touches anything: proxy off, but carrying
+    /// What a tunnel arrives with before Siphon touches anything: proxy off, but carrying
     /// exceptions the shell script's `d.init` + `set` would have destroyed.
     private func seed() -> ProxyDictionary {
         ProxyDictionary(entries: [

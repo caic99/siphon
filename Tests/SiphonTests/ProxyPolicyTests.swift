@@ -137,7 +137,7 @@ final class ProxyPolicyTests: XCTestCase {
     // MARK: - Commands
 
     func testTunnelCommandsRewriteTheWholeDictionary() {
-        let target = ProxyTarget(serviceID: "ABC", name: "VPN", isTunnel: true)
+        let target = ProxyTarget(serviceID: "ABC", name: "Tunnel", isTunnel: true)
         let existing = ProxyDictionary(entries: ["ExceptionsList": .array(["*.local"])])
         let commands = ProxyPolicy.commands(for: .enable(ours), on: target, existing: existing)
 
@@ -152,7 +152,7 @@ final class ProxyPolicyTests: XCTestCase {
     }
 
     func testTunnelDisableKeepsTheServerAndExceptions() {
-        let target = ProxyTarget(serviceID: "ABC", name: "VPN", isTunnel: true)
+        let target = ProxyTarget(serviceID: "ABC", name: "Tunnel", isTunnel: true)
         let existing = ProxyDictionary(entries: [
             "HTTPEnable": .number(1),
             "HTTPProxy": .string("proxy.example.com"),

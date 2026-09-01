@@ -16,7 +16,7 @@ public struct PrimaryService: Equatable, Sendable {
         self.name = name
     }
 
-    /// VPN-style interfaces have no `networksetup` service; their proxies live
+    /// Tunnel interfaces have no `networksetup` service; their proxies live
     /// in the dynamic State: store and are written with `scutil`.
     public var isTunnel: Bool { Self.isTunnelInterface(interface) }
 
