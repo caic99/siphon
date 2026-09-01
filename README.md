@@ -3,8 +3,8 @@
 A tiny native macOS menu bar app that points your traffic through an HTTP proxy —
 and keeps pointing it there when the default route moves.
 
-It replaces a shell script that had to be re-run by hand after every VPN connect
-or drop.
+It replaces a shell script that had to be re-run by hand every time the network
+changed underneath it.
 
 ![Siphon's menu, with the proxy on](docs/screenshot.png)
 
@@ -15,10 +15,11 @@ or drop.
   SystemConfiguration; the only subprocesses are the privileged writes.
 - **Honest status**: the icon and header show what the system *is*, read back
   from SystemConfiguration after every write — never what the app assumed it set.
-- **Follows the route**: when the default route moves — a VPN connecting, an
-  Ethernet cable going in — the proxy is re-applied to whichever service now
-  owns it. Turning the switch off clears every service Siphon proxied, so a
-  stale proxy can't linger on Wi-Fi after you've moved to Ethernet.
+- **Follows the route**: when the default route moves — an Ethernet cable going
+  in, Wi-Fi taking over, a tunnel interface coming up — the proxy is re-applied
+  to whichever service now owns it. Turning the switch off clears every service
+  Siphon proxied, so a stale proxy can't linger on Wi-Fi after you've moved to
+  Ethernet.
 - **Keeps your exception lists**: Siphon owns six keys (the HTTP and HTTPS
   enable flags, hosts, and ports) and carries the rest of each service's proxy
   dictionary through untouched — `ExceptionsList`, `ExcludeSimpleHostnames`,
@@ -98,8 +99,8 @@ written to — whichever store that kind of service uses:
 | `utun*`, `ppp*`, `tun*`, `tap*` | `State:/Network/Service/<id>/Proxies` | `scutil` |
 | everything else | `Setup:/Network/Service/<id>/Proxies` | `networksetup` |
 
-VPN tunnels have no `networksetup` service, which is why they take the dynamic
-store route. Both need root, so writes go through `sudo -n` when a sudoers rule
+Tunnel interfaces have no `networksetup` service, which is why they take the
+dynamic store route. Both need root, so writes go through `sudo -n` when a sudoers rule
 allows it and a native admin prompt otherwise. All the commands for one toggle
 are issued as a single privileged task, so it asks at most once.
 

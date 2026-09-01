@@ -2,15 +2,15 @@ import Foundation
 import SystemConfiguration
 
 /// Watches for the default route moving and for proxy settings changing under
-/// us, so the menu never shows a stale answer and a reconnected VPN can be
-/// re-proxied without the user asking.
+/// us, so the menu never shows a stale answer and a service that has just taken
+/// over the route can be re-proxied without the user asking.
 public final class NetworkMonitor {
     /// Fired on the main queue after changes have settled.
     public var onChange: (() -> Void)?
 
     /// Interface-up, address assignment, and DNS updates arrive as a burst;
     /// applying a proxy on each one would issue several privileged writes for a
-    /// single VPN connect.
+    /// single network change.
     private static let settleDelay: TimeInterval = 1.5
 
     private var store: SCDynamicStore?

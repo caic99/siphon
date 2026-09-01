@@ -99,7 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         reapplyItem.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath",
                                     accessibilityDescription: "Re-apply")
         reapplyItem.toolTip = "Re-apply the proxy to whichever service owns the default route "
-            + "when it moves — a VPN connecting or dropping. Runs automatically only when "
+            + "when it moves — a cable going in, Wi-Fi taking over, a tunnel coming up. "
+            + "Runs automatically only when "
             + "passwordless sudo is available, so a password dialog never appears unprompted."
         menu.addItem(reapplyItem)
         menu.addItem(.separator())

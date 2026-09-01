@@ -326,7 +326,8 @@ public final class ProxyController {
 
     /// Touched services that still have a proxy on. Ones already off are
     /// forgotten here — there is nothing left to clear, and a service that has
-    /// gone away (a disconnected VPN) must not be resurrected by writing to it.
+    /// gone away (a tunnel that has since dropped) must not be resurrected by
+    /// writing to it.
     private func staleTargets(excluding target: ProxyTarget?) -> [ProxyTarget] {
         var remaining = touched
         var stale: [ProxyTarget] = []

@@ -14,7 +14,7 @@ final class PrimaryServiceTests: XCTestCase {
     /// Tunnels have no networksetup service, so their proxies live in the
     /// dynamic State: store; physical services persist theirs in Setup:.
     func testProxyKeyFollowsTheInterfaceKind() {
-        let tunnel = PrimaryService(serviceID: "ABC", interface: "utun4", name: "VPN")
+        let tunnel = PrimaryService(serviceID: "ABC", interface: "utun4", name: "Tunnel")
         XCTAssertEqual(tunnel.proxyKey, "State:/Network/Service/ABC/Proxies")
 
         let wired = PrimaryService(serviceID: "DEF", interface: "en7", name: "USB LAN")
@@ -22,7 +22,7 @@ final class PrimaryServiceTests: XCTestCase {
     }
 
     func testTargetInheritsTheServiceKey() {
-        let service = PrimaryService(serviceID: "ABC", interface: "utun4", name: "VPN")
+        let service = PrimaryService(serviceID: "ABC", interface: "utun4", name: "Tunnel")
         XCTAssertEqual(ProxyTarget(service).proxyKey, service.proxyKey)
     }
 
