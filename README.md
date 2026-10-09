@@ -1,4 +1,4 @@
-# Siphon ⇢
+# <img src="docs/icon.png" width="64" align="center" alt=""> Siphon
 
 A tiny native macOS menu bar app that points your traffic through an HTTP proxy —
 and keeps pointing it there when the default route moves.
@@ -145,6 +145,18 @@ scutil <<< "show State:/Network/Global/IPv4"      # which service owns the route
 - A proxy dictionary value containing a literal backslash can't be expressed in
   `scutil`'s command language. Siphon reports such keys rather than mangling
   them.
+
+## App icon
+
+`Siphon.icon` is an Icon Composer document — a single glass layer over a
+gradient, which macOS 26 renders as Liquid Glass at runtime (light, dark,
+clear and tinted variants included). `make-app.sh` compiles it with `actool`
+into `Assets.car` plus a pre-rendered `Siphon.icns` for earlier systems; on a
+machine without Xcode 26 the app simply builds without an icon.
+
+The layer is the same SF Symbol the menu bar uses, rendered by
+`Tools/render-icon-glyph.swift` with the arrow kept as a true cut-out so the
+gradient shows through it.
 
 ## Notes on the screenshot
 

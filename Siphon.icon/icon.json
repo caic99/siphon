@@ -1,0 +1,15 @@
+{
+  "fill" : { "automatic-gradient" : "extended-srgb:0.050,0.360,0.800,1.000" },
+  "groups" : [ {
+    "name" : "Sign",
+    "layers" : [ {
+      "image-name" : "sign.png", "name" : "Sign", "glass" : true,
+      "position" : { "scale" : 1, "translation-in-points" : [ 0, 0 ] }
+    } ],
+    "shadow" : { "kind" : "neutral", "opacity" : 0.5 },
+    "translucency" : { "enabled" : true, "value" : 0.5 },
+    "lighting" : "individual",
+    "specular" : true
+  } ],
+  "supported-platforms" : { "circles" : [ "watchOS" ], "squares" : "shared" }
+}
