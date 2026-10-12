@@ -520,7 +520,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.state = selectedID == config.id ? .on : .off
             item.image = Self.stateDot(bridgeError == nil ? color : .systemRed)
             item.attributedTitle = Self.tunnelTitle(config.target, port: config.httpPort)
-            item.toolTip = "\(detail)\nHTTP proxy port \(config.httpPort) · SOCKS5 port \(config.socksPort)"
+            item.toolTip = "\(detail)\nHTTP :\(config.httpPort) · SOCKS5 :\(config.socksPort)"
                 + (bridgeError.map { "\nProxy not listening: \($0)"
                     + (tunnels.bridgePortOwner(for: config.id).map { " — port held by \($0)" } ?? "") } ?? "")
             menu.insertItem(item, at: insertionIndex + offset); offset += 1
