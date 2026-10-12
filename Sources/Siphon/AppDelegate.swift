@@ -19,7 +19,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var obstructionItem: NSMenuItem!
     private var customServerItem: NSMenuItem!
     private var copyExportsItem: NSMenuItem!
-    private var tunnelsHeaderItem: NSMenuItem!
     private var addTunnelItem: NSMenuItem!
     private var removeTunnelItem: NSMenuItem!
     private var tunnelItems: [NSMenuItem] = []
@@ -110,12 +109,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                       keyEquivalent: "")
         customServerItem.target = self
         menu.addItem(customServerItem)
-        menu.addItem(.separator())
 
-        // SSH tunnels: each row is a submenu; the bridge address rides in the
-        // section header so it is visible without opening anything.
-        tunnelsHeaderItem = Self.sectionHeader("SSH Tunnels")
-        menu.addItem(tunnelsHeaderItem)
+        // SSH tunnels live in the same list: a tunnel is just a proxy that
+        // Siphon also keeps alive. Its rows go before Custom…; these two
+        // follow it.
         addTunnelItem = NSMenuItem(title: "Add SSH Tunnel…", action: #selector(addTunnel),
                                    keyEquivalent: "")
         addTunnelItem.target = self
@@ -481,10 +478,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let tunnels = controller.tunnels
         for item in tunnelItems { menu.removeItem(item) }
         tunnelItems = []
-        tunnelsHeaderItem.title = "SSH Tunnels"
-        tunnelsHeaderItem.toolTip = nil
-
-        guard let insertionIndex = menu.items.firstIndex(of: addTunnelItem) else { return }
+        // Tunnel rows sit at the end of the server list, just above Custom….
+        guard let insertionIndex = menu.items.firstIndex(of: customServerItem) else { return }
         let selectedID = tunnels.tunnel(forProxy: controller.server)?.id
         var offset = 0
         for config in tunnels.configs {

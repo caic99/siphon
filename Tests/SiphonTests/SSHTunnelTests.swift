@@ -74,6 +74,19 @@ final class SSHTunnelTests: XCTestCase {
                       "state: \(t.state)")
     }
 
+    /// What Quit relies on: by the time stopNow() returns, SIGTERM has reached
+    /// the child, so an exit() right after cannot leave it behind.
+    func testStopNowSignalsTheChildBeforeReturning() {
+        let t = make("good-host")
+        t.start()
+        XCTAssertTrue(wait { t.state == .connected })
+        t.stopNow()
+        XCTAssertEqual(t.state, .idle)
+        // The fake ssh is a python process; SIGTERM ends it within a moment.
+        XCTAssertTrue(wait(2) { !TestServers.waitForPort(t.socksPort, seconds: 0.1) },
+                      "child still listening after stopNow returned")
+    }
+
     func testRestartComesBackConnected() {
         let t = make("good-host")
         t.start()

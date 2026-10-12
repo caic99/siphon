@@ -69,6 +69,14 @@ public final class SSHTunnel {
 
     public func start() { queue.async { [self] in wanted = true; retries = 0; launch() } }
     public func stop() { queue.async { [self] in wanted = false; pending?.cancel(); terminate(); state = .idle } }
+
+    /// Stop and do not return until the child has been signalled. For process
+    /// exit: an asynchronous stop queued just before `exit()` never runs, and
+    /// the ssh child is orphaned with its tunnel still up -- which is exactly
+    /// what happened on Quit before this existed.
+    public func stopNow() {
+        queue.sync { [self] in wanted = false; pending?.cancel(); terminate(); state = .idle }
+    }
     public func retry() { start() }
     /// The network moved: a live ssh session is probably dead or soon will be.
     public func restart() { queue.async { [self] in guard wanted else { return }; retries = 0; terminate(); launch() } }

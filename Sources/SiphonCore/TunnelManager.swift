@@ -126,8 +126,9 @@ public final class TunnelManager {
         for config in configs where config.enabled { launch(config) }
     }
 
+    /// Synchronous: safe to call immediately before the process exits.
     public func stopAll() {
-        for l in live.values { l.tunnel.stop(); l.bridge.stop() }
+        for l in live.values { l.tunnel.stopNow(); l.bridge.stop() }
         live.removeAll()
     }
 

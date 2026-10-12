@@ -11,6 +11,9 @@ import Foundation
 public final class ChildRegistry {
     private static let key = "sshChildren"
     private let defaults: UserDefaults
+    /// Tunnels record from their own queues; without this, two concurrent
+    /// read-modify-writes lose one of the children.
+    private let lock = NSLock()
 
     public init(defaults: UserDefaults) { self.defaults = defaults }
 
@@ -26,6 +29,7 @@ public final class ChildRegistry {
     }
 
     public func record(pid: Int32, socksPort: UInt16) {
+        lock.lock(); defer { lock.unlock() }
         var list = entries
         list.removeAll { $0.pid == pid }
         list.append(Entry(pid: pid, socksPort: socksPort))
@@ -33,6 +37,7 @@ public final class ChildRegistry {
     }
 
     public func forget(pid: Int32) {
+        lock.lock(); defer { lock.unlock() }
         entries = entries.filter { $0.pid != pid }
     }
 
@@ -42,6 +47,7 @@ public final class ChildRegistry {
     /// many were stopped.
     @discardableResult
     public func reapLeftovers() -> Int {
+        lock.lock(); defer { lock.unlock() }
         var reaped = 0
         for entry in entries {
             if Self.commandLine(of: entry.pid)?.contains("-D 127.0.0.1:\(entry.socksPort)") == true {
