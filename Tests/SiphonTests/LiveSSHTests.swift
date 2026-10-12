@@ -30,7 +30,7 @@ final class LiveSSHTests: XCTestCase {
         // Any HTTP status proves bytes went host -> tunnel -> origin and back.
         let (status, code) = TestServers.curl(["-o", "/dev/null", "-w", "%{http_code}",
                                                "-x", "http://127.0.0.1:\(m.httpPort)",
-                                               "https://www.nvidia.com/"])
+                                               "https://example.com/"])
         print("live: curl exit \(status), HTTP \(code) via \(host)")
         XCTAssertNotEqual(code, "000", "no HTTP response came back through the tunnel")
     }

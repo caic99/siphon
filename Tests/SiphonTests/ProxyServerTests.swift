@@ -13,8 +13,8 @@ final class ProxyServerTests: XCTestCase {
     }
 
     func testAcceptsIPv4Literals() {
-        XCTAssertEqual(ProxyServer.parse("10.0.0.1:3128"),
-                       ProxyServer(host: "10.0.0.1", port: 3128))
+        XCTAssertEqual(ProxyServer.parse("203.0.113.1:3128"),
+                       ProxyServer(host: "203.0.113.1", port: 3128))
     }
 
     func testTrimsSurroundingWhitespace() {
