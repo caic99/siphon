@@ -34,7 +34,7 @@ enum Command {
         if arguments.contains("--exports") {
             let controller = ProxyController()
             controller.refresh()
-            guard let server = controller.activeServer ?? controller.server else {
+            guard let server = controller.exportServer else {
                 FileHandle.standardError.write(Data("no proxy server known\n".utf8))
                 return 1
             }

@@ -201,6 +201,17 @@ public final class ProxyController {
     public var isProxyActive: Bool { current?.isOn ?? false }
     public var activeServer: ProxyServer? { current?.server }
 
+    /// The server exports should describe: what is actually in force, falling
+    /// back to the selection when the proxy is off. When the live address is
+    /// the selected one, the selection is returned, because it is the copy
+    /// that carries a tunnel's SOCKS port -- the address read back from the
+    /// system does not.
+    public var exportServer: ProxyServer? {
+        guard let active = activeServer else { return server }
+        if let selected = server, selected == active { return selected }
+        return tunnels.tunnel(forProxy: active).map(tunnels.proxyAddress(for:)) ?? active
+    }
+
     /// Keyed off the live state, matching how the menu row is labelled: the
     /// click does what the row says, even when the switch disagrees with the Mac.
     public func toggle() { setDesired(!isProxyActive) }

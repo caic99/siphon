@@ -264,7 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// when the proxy is off — a terminal is often proxied while the system is
     /// not.
     @objc private func copyExports() {
-        guard let server = controller.activeServer ?? controller.server else { return }
+        guard let server = controller.exportServer else { return }
         let commands = ShellExports.commands(for: server)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(commands, forType: .string)
@@ -434,7 +434,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         headerItem.isEnabled = controller.canToggle
         refreshToggleItem()
-        copyExportsItem.isEnabled = (controller.activeServer ?? controller.server) != nil
+        copyExportsItem.isEnabled = controller.exportServer != nil
         refreshObstructionItem()
         refreshServerItems()
         refreshTunnelItems()
