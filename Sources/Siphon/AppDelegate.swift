@@ -138,6 +138,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // nothing at this width — and the service name fits without clipping.
         let width: CGFloat = 225, height: CGFloat = 36, margin: CGFloat = 14
         let container = ClickableView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        // The menu is as wide as its widest row, which may be wider than this
+        // view's nominal 225pt (a long tunnel name, say). Stretch with the menu
+        // so the switch, anchored by its right margin below, stays flush right.
+        container.autoresizingMask = [.width]
         // Clicks that land on the switch never reach here — it consumes them —
         // so this only covers the rest of the row.
         container.onClick = { [weak self] in self?.toggleProxy() }
@@ -169,6 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggle.setFrameSize(switchSize)
         toggle.setFrameOrigin(NSPoint(x: width - switchSize.width - margin,
                                       y: ((height - switchSize.height) / 2).rounded()))
+        toggle.autoresizingMask = [.minXMargin]
         container.addSubview(toggle)
 
         let textX: CGFloat = 38
@@ -179,6 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         title.textColor = .labelColor
         title.lineBreakMode = .byTruncatingTail
         title.frame = NSRect(x: textX, y: 18, width: textWidth, height: 16)
+        title.autoresizingMask = [.width]
         container.addSubview(title)
 
         let subtitle = NSTextField(labelWithString: "")
@@ -186,6 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         subtitle.textColor = .secondaryLabelColor
         subtitle.lineBreakMode = .byTruncatingTail
         subtitle.frame = NSRect(x: textX, y: 4, width: textWidth, height: 13)
+        subtitle.autoresizingMask = [.width]
         container.addSubview(subtitle)
 
         headerIconView = icon

@@ -34,6 +34,10 @@ public final class ProxyController {
     /// Set when the switch was turned off *for* the tunnels going down, so it
     /// is turned back on when one returns — and only then.
     private var suspendedForTunnels = false
+    /// Which service owned the default route at the last look. The monitor also
+    /// fires on proxy-key changes — including Siphon's own writes — and those
+    /// must not restart ssh sessions; only a genuinely new route should.
+    private var lastRouteOwner: String?
 
     public var onChange: (() -> Void)?
     public var onError: ((String) -> Void)?
@@ -129,6 +133,7 @@ public final class ProxyController {
         tunnels.onChange = { [weak self] in self?.tunnelsChanged() }
         tunnels.start()
         refreshState()
+        lastRouteOwner = primary.map { "\($0.serviceID)|\($0.interface)" }
         refreshServers()
         _ = reconcile(trigger: .automatic)
         onChange?()
@@ -222,6 +227,7 @@ public final class ProxyController {
 
     private func setDesired(_ on: Bool) {
         let previous = desiredOn
+        suspendedForTunnels = false   // the user decided; stop second-guessing
         desiredOn = on
         finish(reconcile(trigger: .userClick), revertingTo: previous)
     }
@@ -239,8 +245,12 @@ public final class ProxyController {
     }
 
     private func handleNetworkChange() {
-        tunnels.networkChanged()
         refreshState()
+        let owner = primary.map { "\($0.serviceID)|\($0.interface)" }
+        if owner != lastRouteOwner {
+            lastRouteOwner = owner
+            tunnels.networkChanged()
+        }
         refreshServers()
         if reapplyOnNetworkChange {
             _ = reconcile(trigger: .automatic)
