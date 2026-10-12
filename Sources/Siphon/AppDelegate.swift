@@ -14,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var headerTitleLabel: NSTextField!
     private var headerSubtitleLabel: NSTextField!
     private var headerSwitch: NSSwitch!
+    /// The glass capsule around the switch on macOS 26; nil on earlier systems.
+    private var headerSwitchGlass: NSView?
     private var headerItem: NSMenuItem!
     private var toggleItem: NSMenuItem!
     private var obstructionItem: NSMenuItem!
@@ -192,13 +194,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let switchSize = NSSize(width: (natural.width * Self.switchScale).rounded(),
                                 height: (natural.height * Self.switchScale).rounded())
         toggle.setFrameSize(switchSize)
-        toggle.setFrameOrigin(NSPoint(x: width - switchSize.width - margin,
-                                      y: ((height - switchSize.height) / 2).rounded()))
-        toggle.autoresizingMask = [.minXMargin]
-        container.addSubview(toggle)
+
+        // Liquid Glass: NSSwitch has no glass form of its own, so it sits in a
+        // glass capsule that takes the accent tint while on and is clear glass
+        // while off. The regular style is used because the clear one samples
+        // the window behind the menu far more and bleeds it across the row.
+        let control: NSView
+        if #available(macOS 26.0, *) {
+            let pad: CGFloat = 4
+            let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: switchSize.width + pad * 2,
+                                                        height: switchSize.height + pad * 2))
+            glass.style = .regular
+            glass.cornerRadius = glass.frame.height / 2
+            glass.contentView = toggle
+            toggle.setFrameOrigin(NSPoint(x: pad, y: pad))
+            headerSwitchGlass = glass
+            control = glass
+        } else {
+            control = toggle
+        }
+        control.setFrameOrigin(NSPoint(x: width - control.frame.width - margin,
+                                       y: ((height - control.frame.height) / 2).rounded()))
+        control.autoresizingMask = [.minXMargin]
+        container.addSubview(control)
 
         let textX: CGFloat = 38
-        let textWidth = toggle.frame.minX - 10 - textX
+        let textWidth = control.frame.minX - 10 - textX
 
         let title = NSTextField(labelWithString: "")
         title.font = .systemFont(ofSize: 13)
@@ -417,6 +438,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let desired: NSControl.StateValue = active ? .on : .off
         if headerSwitch.state != desired { headerSwitch.animator().state = desired }
         headerSwitch.isEnabled = controller.canToggle
+        if #available(macOS 26.0, *), let glass = headerSwitchGlass as? NSGlassEffectView {
+            glass.tintColor = active ? .controlAccentColor : nil
+        }
 
         headerItem.isEnabled = controller.canToggle
         refreshToggleItem()
