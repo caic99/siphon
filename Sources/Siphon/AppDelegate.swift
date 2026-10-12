@@ -19,6 +19,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var obstructionItem: NSMenuItem!
     private var customServerItem: NSMenuItem!
     private var copyExportsItem: NSMenuItem!
+    private var tunnelsHeaderItem: NSMenuItem!
+    private var addTunnelItem: NSMenuItem!
+    private var tunnelItems: [NSMenuItem] = []
     private var reapplyItem: NSMenuItem!
     private var serverItems: [NSMenuItem] = []
     /// 54x24 down to 43x19 — proportionate to a menu row.
@@ -33,6 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         buildStatusItem()
         controller.start()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        controller.shutdown()
     }
 
     // MARK: - Menu
@@ -82,6 +89,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                       keyEquivalent: "")
         customServerItem.target = self
         menu.addItem(customServerItem)
+        menu.addItem(.separator())
+
+        // SSH tunnels: each row is a submenu; the bridge address rides in the
+        // section header so it is visible without opening anything.
+        tunnelsHeaderItem = Self.sectionHeader("SSH Tunnels")
+        menu.addItem(tunnelsHeaderItem)
+        addTunnelItem = NSMenuItem(title: "Add SSH Tunnel…", action: #selector(addTunnel),
+                                   keyEquivalent: "")
+        addTunnelItem.target = self
+        addTunnelItem.toolTip = "ssh -N -D to a host from your ssh config (keys or agent; no prompts). "
+            + "Connected tunnels are load-balanced behind one local HTTP proxy, which then "
+            + "appears under Proxy Server."
+        menu.addItem(addTunnelItem)
         menu.addItem(.separator())
 
         copyExportsItem = NSMenuItem(title: "Copy Shell Exports",
@@ -222,6 +242,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.select(server)
     }
 
+    @objc private func addTunnel() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "SSH Tunnel"
+        alert.informativeText = "A host as you would type it after ssh — an alias from ~/.ssh/config "
+            + "or user@host. It must sign in without a prompt (keys or agent). Siphon runs "
+            + "ssh -N -D: no command executes on the remote side."
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.placeholderString = "user@host"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let target = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !target.isEmpty, !target.contains(" "), !target.hasPrefix("-") else {
+            showAlert("That isn't an SSH destination", "Use a config alias or user@host, with no spaces.")
+            return
+        }
+        controller.tunnels.add(target: target)
+    }
+
+    @objc private func toggleTunnel(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID,
+              let config = controller.tunnels.configs.first(where: { $0.id == id }) else { return }
+        controller.tunnels.setEnabled(id, !config.enabled)
+    }
+
+    @objc private func retryTunnel(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        controller.tunnels.retry(id)
+    }
+
+    @objc private func removeTunnel(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        controller.tunnels.remove(id)
+    }
+
+    @objc private func useTunnelsAsProxy() {
+        controller.select(ProxyServer(host: "127.0.0.1", port: Int(controller.tunnels.httpPort)))
+    }
+
     @objc private func addCustomServer() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
@@ -311,6 +373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         copyExportsItem.isEnabled = (controller.activeServer ?? controller.server) != nil
         refreshObstructionItem()
         refreshServerItems()
+        refreshTunnelItems()
         reapplyItem.state = controller.reapplyOnNetworkChange ? .on : .off
     }
 
@@ -328,7 +391,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .failed:
             return "Couldn't apply"
         case nil:
-            return primary.name
+            return controller.isSuspendedForTunnels ? "Paused · tunnels down" : primary.name
         }
     }
 
@@ -340,6 +403,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggleItem.image = NSImage(systemSymbolName: active ? "stop.circle" : "play.circle",
                                    accessibilityDescription: active ? "Turn off" : "Turn on")
         toggleItem.isEnabled = controller.canToggle
+    }
+
+    private static func stateDot(_ color: NSColor) -> NSImage? {
+        let image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 9, weight: .regular)
+                .applying(.init(paletteColors: [color])))
+        image?.isTemplate = false
+        return image
+    }
+
+    private func refreshTunnelItems() {
+        let tunnels = controller.tunnels
+        for item in tunnelItems { menu.removeItem(item) }
+        tunnelItems = []
+        tunnelsHeaderItem.title = tunnels.enabledCount > 0
+            ? "SSH Tunnels · http://127.0.0.1:\(tunnels.httpPort)"
+            : "SSH Tunnels"
+        tunnelsHeaderItem.toolTip = tunnels.bridgeError.map { "Local proxy not listening: \($0)" }
+
+        guard let insertionIndex = menu.items.firstIndex(of: addTunnelItem) else { return }
+        for (offset, config) in tunnels.configs.enumerated() {
+            let state = tunnels.state(of: config.id)
+            let item = NSMenuItem(title: config.target, action: nil, keyEquivalent: "")
+            let (color, detail): (NSColor, String)
+            switch state {
+            case .connected:
+                let since = tunnels.connectedSince(config.id).map { " for \(Self.format(Date().timeIntervalSince($0)))" } ?? ""
+                (color, detail) = (.systemGreen, "Connected\(since)")
+            case .connecting:
+                (color, detail) = (.systemYellow, "Connecting…")
+            case .reconnecting(let reason, let attempt):
+                (color, detail) = (.systemOrange, "Reconnecting (\(attempt)/3): \(reason)")
+            case .gaveUp(let reason):
+                (color, detail) = (.systemRed, "Gave up: \(reason)")
+            case .idle:
+                (color, detail) = (config.enabled ? .systemYellow : .tertiaryLabelColor,
+                                   config.enabled ? "Starting…" : "Disconnected")
+            }
+            item.image = Self.stateDot(color)
+            item.toolTip = "\(detail)\nSOCKS5 on 127.0.0.1:\(config.socksPort)"
+
+            let sub = NSMenu()
+            let toggle = NSMenuItem(title: config.enabled ? "Disconnect" : "Connect",
+                                    action: #selector(toggleTunnel(_:)), keyEquivalent: "")
+            toggle.target = self; toggle.representedObject = config.id
+            sub.addItem(toggle)
+            if case .gaveUp = state {
+                let retry = NSMenuItem(title: "Retry Now", action: #selector(retryTunnel(_:)), keyEquivalent: "")
+                retry.target = self; retry.representedObject = config.id
+                sub.addItem(retry)
+            }
+            let status = NSMenuItem(title: detail, action: nil, keyEquivalent: "")
+            status.isEnabled = false
+            sub.addItem(status)
+            sub.addItem(.separator())
+            let use = NSMenuItem(title: "Use Tunnels as System Proxy", action: #selector(useTunnelsAsProxy),
+                                 keyEquivalent: "")
+            use.target = self
+            use.state = tunnels.isTunnelProxy(controller.server) ? .on : .off
+            sub.addItem(use)
+            let remove = NSMenuItem(title: "Remove", action: #selector(removeTunnel(_:)), keyEquivalent: "")
+            remove.target = self; remove.representedObject = config.id
+            sub.addItem(remove)
+            item.submenu = sub
+
+            menu.insertItem(item, at: insertionIndex + offset)
+            tunnelItems.append(item)
+        }
+    }
+
+    private static func format(_ interval: TimeInterval) -> String {
+        let m = Int(interval) / 60
+        if m < 1 { return "<1m" }
+        if m < 60 { return "\(m)m" }
+        return "\(m / 60)h \(m % 60)m"
     }
 
     private func refreshObstructionItem() {
@@ -373,7 +511,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let servers = controller.knownServers
         let labels = ServerLabels.labels(for: servers)
         for (offset, server) in servers.enumerated() {
-            let label = labels[offset]
+            var label = labels[offset]
+            if controller.tunnels.isTunnelProxy(server) {
+                let n = controller.tunnels.connectedCount
+                label = "SSH Tunnels · \(server.display)" + (n == 0 ? "" : "  (\(n) up)")
+            }
             let item = NSMenuItem(title: label, action: #selector(selectServer(_:)),
                                   keyEquivalent: "")
             item.target = self

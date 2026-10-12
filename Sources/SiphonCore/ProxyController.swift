@@ -30,6 +30,10 @@ public final class ProxyController {
     private let defaults: UserDefaults
     private let runner: PrivilegeRunner
     private let monitor = NetworkMonitor()
+    public let tunnels: TunnelManager
+    /// Set when the switch was turned off *for* the tunnels going down, so it
+    /// is turned back on when one returns — and only then.
+    private var suspendedForTunnels = false
 
     public var onChange: (() -> Void)?
     public var onError: ((String) -> Void)?
@@ -60,10 +64,12 @@ public final class ProxyController {
 
     public init(defaults: UserDefaults = ProxyController.sharedDefaults(),
                 runner: PrivilegeRunner = PrivilegeRunner(),
-                discoversServers: Bool = true) {
+                discoversServers: Bool = true,
+                sshPath: String = "/usr/bin/ssh") {
         self.defaults = defaults
         self.runner = runner
         self.discoversServers = discoversServers
+        self.tunnels = TunnelManager(defaults: defaults, sshPath: sshPath)
     }
 
     // MARK: - Persisted settings
@@ -120,11 +126,16 @@ public final class ProxyController {
     public func start() {
         monitor.onChange = { [weak self] in self?.handleNetworkChange() }
         monitor.start()
+        tunnels.onChange = { [weak self] in self?.tunnelsChanged() }
+        tunnels.start()
         refreshState()
         refreshServers()
         _ = reconcile(trigger: .automatic)
         onChange?()
     }
+
+    /// Call at quit: ssh children must not outlive the app.
+    public func shutdown() { tunnels.stopAll() }
 
     /// Live read. Everything the UI shows comes from here, never from what a
     /// write was expected to accomplish.
@@ -138,6 +149,11 @@ public final class ProxyController {
     /// why no site-specific hostname appears in Siphon's source.
     private func refreshServers() {
         var servers = customServers
+        if tunnels.enabledCount > 0 {
+            let local = ProxyServer(host: "127.0.0.1", port: Int(tunnels.httpPort))
+            servers.removeAll { $0 == local }
+            servers.insert(local, at: 0)
+        }
         if discoversServers {
             for discovered in NetworkState.discoverServers() where !servers.contains(discovered) {
                 servers.append(discovered)
@@ -155,7 +171,7 @@ public final class ProxyController {
     }
 
     private func remember(_ newServer: ProxyServer) {
-        guard !customServers.contains(newServer) else { return }
+        guard !customServers.contains(newServer), !tunnels.isTunnelProxy(newServer) else { return }
         customServers.append(newServer)
     }
 
@@ -223,6 +239,7 @@ public final class ProxyController {
     }
 
     private func handleNetworkChange() {
+        tunnels.networkChanged()
         refreshState()
         refreshServers()
         if reapplyOnNetworkChange {
@@ -230,6 +247,34 @@ public final class ProxyController {
         }
         onChange?()
     }
+
+    // MARK: - Tunnels
+
+    /// Tunnelmux's rule, as chosen: when the system proxy points at the bridge
+    /// and every tunnel has given up, turn the proxy off so traffic goes direct
+    /// instead of failing; when a tunnel comes back, turn it on again. Both
+    /// writes are automatic, so they run only when sudo is silent — otherwise
+    /// the usual orange "awaiting you" state shows.
+    private func tunnelsChanged() {
+        refreshServers()
+        if tunnels.isTunnelProxy(server), tunnels.enabledCount > 0 {
+            if desiredOn, isProxyActive, tunnels.allGaveUp {
+                suspendedForTunnels = true
+                desiredOn = false
+                _ = reconcile(trigger: .automatic)
+            } else if suspendedForTunnels, tunnels.connectedCount > 0 {
+                suspendedForTunnels = false
+                desiredOn = true
+                _ = reconcile(trigger: .automatic)
+            }
+        } else {
+            suspendedForTunnels = false
+        }
+        onChange?()
+    }
+
+    /// True while the switch is off only because the tunnels are down.
+    public var isSuspendedForTunnels: Bool { suspendedForTunnels }
 
     // MARK: - Reconciliation
 

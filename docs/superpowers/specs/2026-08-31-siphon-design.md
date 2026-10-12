@@ -167,3 +167,45 @@ boundary Espresso draws.
 
 `./make-app.sh` → `build/Siphon.app`, `LSUIElement`, ad-hoc signed, version from
 `git describe`. Identical to Espresso and PostureGuard.
+
+---
+
+## Addendum (2026-10-12): SSH tunnels
+
+**Goal.** Point the system proxy at hosts reachable only over SSH, without
+running anything on them. Reimplements `tunnelmux.py` natively; its decisions
+are kept, its code is not.
+
+**Shape.** Each configured target gets its own `ssh -N -D 127.0.0.1:<socks>`
+process (ports from 18081). One HTTP proxy on `127.0.0.1:7890` fronts them all,
+round-robining each request across whichever tunnels are connected. That
+address joins the Proxy Server list, so the switch, re-apply, exports and the
+CLI treat it like any other proxy.
+
+**ssh flags.** `-N` (no remote command), `-D` bound to loopback,
+`BatchMode=yes`, `ExitOnForwardFailure=yes`, `ConnectTimeout=15`,
+`ServerAliveInterval=10`, `ServerAliveCountMax=3`. Not ported from tunnelmux:
+`StrictHostKeyChecking=no` / `UserKnownHostsFile=/dev/null` — host keys are
+verified against the user's `known_hosts`.
+
+**Readiness and health.** A tunnel is connected when its SOCKS port accepts a
+TCP connection — ssh binds it only after authentication, so no output is
+parsed. Probe every second for 15 s after launch, every 45 s after that. On
+failure retry after 8 s, three times, then give up until retried by hand or
+by a network change.
+
+**Bridge.** `CONNECT host:port` → SOCKS5 connect → `200` → raw relay. Absolute
+URI requests are rewritten to origin-form with hop-by-hop proxy headers
+removed and `Connection: close`. 503 when no tunnel is connected, 502 when
+the origin cannot be reached. Loopback only.
+
+**System-proxy policy (chosen).** If the system proxy points at the bridge
+and every enabled tunnel has given up, turn the proxy off so traffic goes
+direct; when a tunnel comes back, turn it on again. Both are automatic
+writes, so they run only when sudo is silent.
+
+**Tests.** Parser and SOCKS5 wire format as pure units; the bridge end to end
+with a real SOCKS5 server and origin, driven by curl (`--noproxy ""`, since a
+shell's `no_proxy` would otherwise route around the bridge); `SSHTunnel` and
+`TunnelManager` against a stand-in `ssh` that genuinely serves SOCKS5 on the
+`-D` port; one opt-in live test (`SIPHON_LIVE_SSH=<host>`).

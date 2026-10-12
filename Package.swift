@@ -10,6 +10,7 @@ let package = Package(
         .target(name: "SiphonCore", path: "Sources/SiphonCore"),
         // The menu bar shell: status item, menu, and nothing else.
         .executableTarget(name: "Siphon", dependencies: ["SiphonCore"], path: "Sources/Siphon"),
-        .testTarget(name: "SiphonTests", dependencies: ["SiphonCore"], path: "Tests/SiphonTests"),
+        .testTarget(name: "SiphonTests", dependencies: ["SiphonCore"], path: "Tests/SiphonTests",
+                    resources: [.copy("Fixtures")]),
     ]
 )
