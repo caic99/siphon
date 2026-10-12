@@ -136,10 +136,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         customServerItem = NSMenuItem(title: "Add Proxy Server…", action: #selector(addCustomServer),
                                       keyEquivalent: "")
         customServerItem.target = self
+        customServerItem.image = NSImage(systemSymbolName: "server.rack", accessibilityDescription: "Proxy server")
         menu.addItem(customServerItem)
         addTunnelItem = NSMenuItem(title: "Add SSH Tunnel…", action: #selector(addTunnel),
                                    keyEquivalent: "")
         addTunnelItem.target = self
+        addTunnelItem.image = NSImage(systemSymbolName: "terminal", accessibilityDescription: "SSH")
         addTunnelItem.toolTip = "ssh -N -D to a host from your ssh config (keys or agent; no prompts). "
             + "Each tunnel is its own local HTTP proxy: click a tunnel to point the system at it, "
             + "hold ⌥ to connect or disconnect it."
@@ -147,6 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Added servers and tunnels; discovered servers come from the system
         // and are not ours to remove.
         removeItem = NSMenuItem(title: "Remove", action: nil, keyEquivalent: "")
+        removeItem.image = NSImage(systemSymbolName: "minus.circle", accessibilityDescription: "Remove")
         removeItem.submenu = NSMenu()
         menu.addItem(removeItem)
         menu.addItem(.separator())
@@ -154,6 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let quit = NSMenuItem(title: "Quit Siphon",
                               action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
+        quit.image = NSImage(systemSymbolName: "xmark.square", accessibilityDescription: "Quit")
         menu.addItem(quit)
 
         statusItem.menu = menu
