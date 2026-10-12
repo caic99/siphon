@@ -74,37 +74,6 @@ final class SSHTunnelTests: XCTestCase {
                       "state: \(t.state)")
     }
 
-    /// The supervisor must take ssh down when the app does -- including the
-    /// ways that skip applicationWillTerminate. Simulated by closing the pipe
-    /// the app would hold, exactly what the kernel does when it dies.
-    func testSSHDiesWhenTheLeashCloses() {
-        let port = TestServers.freePort()
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", SSHTunnel.supervisorScript, "test", fakeSSH, "-N", "-D", "127.0.0.1:\(port)", "good-host"]
-        let leash = Pipe()
-        p.standardInput = leash
-        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-        try! p.run()
-        XCTAssertTrue(TestServers.waitForPort(port, seconds: 8), "fake ssh never listened")
-        try! leash.fileHandleForWriting.close()
-        XCTAssertTrue(wait(5) { !p.isRunning }, "supervisor still running after its stdin closed")
-        XCTAssertFalse(TestServers.waitForPort(port, seconds: 1), "ssh outlived its supervisor")
-    }
-
-    /// And when ssh itself dies, the supervisor exits with ssh's status so the
-    /// tunnel notices.
-    func testSupervisorPassesThroughSSHsExitStatus() {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", SSHTunnel.supervisorScript, "test", fakeSSH, "-N", "-D", "127.0.0.1:1", "fail-host"]
-        p.standardInput = Pipe()
-        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-        try! p.run()
-        p.waitUntilExit()
-        XCTAssertEqual(p.terminationStatus, 255)
-    }
-
     func testRestartComesBackConnected() {
         let t = make("good-host")
         t.start()

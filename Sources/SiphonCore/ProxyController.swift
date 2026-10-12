@@ -286,6 +286,18 @@ public final class ProxyController {
     /// True while the switch is off only because the tunnels are down.
     public var isSuspendedForTunnels: Bool { suspendedForTunnels }
 
+    /// Move the bridge off an occupied port. If the system proxy was pointed
+    /// at the old address, point it at the new one (applied at once when on).
+    public func moveTunnelProxyToFreePort() {
+        let wasSelected = tunnels.isTunnelProxy(server)
+        let port = tunnels.moveBridgeToFreePort()
+        if wasSelected {
+            select(ProxyServer(host: "127.0.0.1", port: Int(port)))
+        } else {
+            refresh()
+        }
+    }
+
     // MARK: - Reconciliation
 
     /// Brings the current service in line with the switch. Returns the outcome

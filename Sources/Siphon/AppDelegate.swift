@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var copyExportsItem: NSMenuItem!
     private var tunnelsHeaderItem: NSMenuItem!
     private var addTunnelItem: NSMenuItem!
+    private var movePortItem: NSMenuItem!
     private var tunnelItems: [NSMenuItem] = []
     private var reapplyItem: NSMenuItem!
     private var serverItems: [NSMenuItem] = []
@@ -34,12 +35,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.onError = { [weak self] message in
             self?.showAlert("Couldn't change the proxy", message)
         }
+        installSignalHandlers()
         buildStatusItem()
         controller.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         controller.shutdown()
+    }
+
+    /// applicationWillTerminate runs for Quit, not for SIGTERM/SIGINT/SIGHUP
+    /// (pkill, logout, a terminal closing). Catch those too, so ssh children
+    /// never outlive the app on any exit short of a crash — and a crash's
+    /// leftovers are reaped at the next launch by ChildRegistry.
+    private var signalSources: [DispatchSourceSignal] = []
+
+    private func installSignalHandlers() {
+        for sig in [SIGTERM, SIGINT, SIGHUP] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler { [weak self] in
+                self?.controller.shutdown()
+                exit(0)
+            }
+            source.resume()
+            signalSources.append(source)
+        }
     }
 
     // MARK: - Menu
@@ -102,6 +123,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             + "Connected tunnels are load-balanced behind one local HTTP proxy, which then "
             + "appears under Proxy Server."
         menu.addItem(addTunnelItem)
+        // Shown only while the bridge's port is taken by something else.
+        movePortItem = NSMenuItem(title: "Move Proxy to Free Port", action: #selector(moveProxyPort),
+                                  keyEquivalent: "")
+        movePortItem.target = self
+        movePortItem.image = NSImage(systemSymbolName: "arrow.right.to.line", accessibilityDescription: nil)
+        menu.addItem(movePortItem)
         menu.addItem(.separator())
 
         copyExportsItem = NSMenuItem(title: "Copy Shell Exports",
@@ -287,6 +314,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.tunnels.remove(id)
     }
 
+    @objc private func moveProxyPort() {
+        controller.moveTunnelProxyToFreePort()
+    }
+
     @objc private func useTunnelsAsProxy() {
         controller.select(ProxyServer(host: "127.0.0.1", port: Int(controller.tunnels.httpPort)))
     }
@@ -424,10 +455,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let tunnels = controller.tunnels
         for item in tunnelItems { menu.removeItem(item) }
         tunnelItems = []
-        tunnelsHeaderItem.title = tunnels.enabledCount > 0
-            ? "SSH Tunnels · http://127.0.0.1:\(tunnels.httpPort)"
-            : "SSH Tunnels"
-        tunnelsHeaderItem.toolTip = tunnels.bridgeError.map { "Local proxy not listening: \($0)" }
+        if tunnels.enabledCount == 0 {
+            tunnelsHeaderItem.title = "SSH Tunnels"
+            tunnelsHeaderItem.toolTip = nil
+            movePortItem.isHidden = true
+        } else if let error = tunnels.bridgeError {
+            let owner = tunnels.bridgePortOwner.map { " by \($0)" } ?? ""
+            tunnelsHeaderItem.title = "SSH Tunnels · port \(tunnels.httpPort) in use"
+            tunnelsHeaderItem.toolTip = "Local proxy not listening (\(error))\(owner). "
+                + "Tunnels are up but nothing is served on 127.0.0.1:\(tunnels.httpPort) by Siphon."
+            movePortItem.isHidden = false
+            movePortItem.title = "Move Proxy to Free Port (\(TunnelManager.firstFreePort(from: tunnels.httpPort &+ 1)))"
+        } else {
+            tunnelsHeaderItem.title = "SSH Tunnels · http://127.0.0.1:\(tunnels.httpPort)"
+            tunnelsHeaderItem.toolTip = nil
+            movePortItem.isHidden = true
+        }
 
         guard let insertionIndex = menu.items.firstIndex(of: addTunnelItem) else { return }
         for (offset, config) in tunnels.configs.enumerated() {

@@ -26,6 +26,7 @@ public final class TunnelManager {
 
     private let defaults: UserDefaults
     private let sshPath: String
+    private let registry: ChildRegistry
     private var tunnels: [UUID: SSHTunnel] = [:]
     private var bridge: HTTPProxyBridge?
     private var roundRobin = 0
@@ -37,6 +38,7 @@ public final class TunnelManager {
     public init(defaults: UserDefaults, sshPath: String = "/usr/bin/ssh") {
         self.defaults = defaults
         self.sshPath = sshPath
+        self.registry = ChildRegistry(defaults: defaults)
     }
 
     // MARK: - Configuration
@@ -50,15 +52,51 @@ public final class TunnelManager {
         set { defaults.set(try? JSONEncoder().encode(newValue), forKey: Key.configs) }
     }
 
+    /// The bridge's port. Chosen on first use as the first free port from 7890
+    /// (tunnelmux may already hold 7890 itself) and then kept, because exports
+    /// and the system proxy refer to it by number.
     public var httpPort: UInt16 {
         get {
             let stored = defaults.integer(forKey: Key.httpPort)
-            return stored > 0 ? UInt16(stored) : Self.defaultHTTPPort
+            return stored > 0 ? UInt16(stored) : Self.firstFreePort(from: Self.defaultHTTPPort)
         }
         set {
             defaults.set(Int(newValue), forKey: Key.httpPort)
             if bridge != nil { stopBridge(); startBridgeIfNeeded() }
         }
+    }
+
+    /// When the kept port has since been taken, the user chooses to move: this
+    /// picks the next free port, persists it and restarts the bridge. Returns
+    /// the new port.
+    @discardableResult
+    public func moveBridgeToFreePort() -> UInt16 {
+        let next = Self.firstFreePort(from: httpPort &+ 1)
+        httpPort = next
+        return next
+    }
+
+    /// What is sitting on the bridge's port, for the error message.
+    public var bridgePortOwner: String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        p.arguments = ["-nP", "-iTCP:\(httpPort)", "-sTCP:LISTEN", "-Fcp"]
+        let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return nil }
+        let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        p.waitUntilExit()
+        var pid = "", cmd = ""
+        for line in text.split(separator: "\n") {
+            if line.hasPrefix("p") { pid = String(line.dropFirst()) }
+            if line.hasPrefix("c") { cmd = String(line.dropFirst()) }
+        }
+        return cmd.isEmpty ? nil : "\(cmd) (pid \(pid))"
+    }
+
+    public static func firstFreePort(from start: UInt16) -> UInt16 {
+        var port = start
+        while !portIsFree(port) && port < UInt16.max { port += 1 }
+        return port
     }
 
     /// The address clients use. Nil until the bridge is actually listening.
@@ -77,6 +115,8 @@ public final class TunnelManager {
 
     /// Launch whatever was enabled last time. Call once at app start.
     public func start() {
+        // Children of a previous instance that died without cleaning up.
+        registry.reapLeftovers()
         for config in configs where config.enabled { launch(config) }
         startBridgeIfNeeded()
     }
@@ -149,7 +189,18 @@ public final class TunnelManager {
 
     private func launch(_ config: TunnelConfig) {
         tunnels[config.id]?.stop()
-        let tunnel = SSHTunnel(target: config.target, socksPort: config.socksPort, sshPath: sshPath)
+        var config = config
+        // The port kept from last time may have been taken since -- by
+        // tunnelmux, another instance, anything. ssh would fail to bind, or
+        // worse, the readiness probe would see the stranger's listener and
+        // call it connected. SOCKS ports are internal, so just move.
+        if !Self.portIsFree(config.socksPort) {
+            config.socksPort = nextSOCKSPort()
+            var list = configs
+            if let i = list.firstIndex(where: { $0.id == config.id }) { list[i] = config; configs = list }
+        }
+        let tunnel = SSHTunnel(target: config.target, socksPort: config.socksPort, sshPath: sshPath,
+                               registry: registry)
         tunnel.onChange = { [weak self] in self?.notify() }
         tunnels[config.id] = tunnel
         tunnel.start()
@@ -184,6 +235,9 @@ public final class TunnelManager {
 
     private func startBridgeIfNeeded() {
         guard bridge == nil, enabledCount > 0 else { return }
+        if defaults.integer(forKey: Key.httpPort) == 0 {
+            defaults.set(Int(httpPort), forKey: Key.httpPort)   // pin the first-use choice
+        }
         let b = HTTPProxyBridge(port: httpPort) { [weak self] in self?.pickUpstream() }
         b.onStateChange = { [weak self] in self?.notify() }
         bridge = b

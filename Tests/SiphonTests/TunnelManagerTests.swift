@@ -91,6 +91,85 @@ final class TunnelManagerTests: XCTestCase {
         XCTAssertTrue(wait { m.state(of: config.id) == .connected })
     }
 
+    /// A child left behind by a dead instance is stopped at the next start --
+    /// but only if its command line still shows our port, so a recycled PID
+    /// belonging to something else is left alone.
+    func testLeftoverChildrenAreReapedAtStart() {
+        let port = TestServers.freePort()
+        // Stand-in for an orphaned `ssh -N -D 127.0.0.1:<port>`. The real ssh
+        // keeps its arguments in its command line, which is what the registry
+        // matches on; fake-ssh.sh execs python and loses them, so run the
+        // SOCKS server directly with the marker as extra (ignored) arguments.
+        let orphan = Process()
+        orphan.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        orphan.arguments = [TestServers.fixtures.appendingPathComponent("socks5-server.py").path,
+                            String(port), "-N", "-D", "127.0.0.1:\(port)"]
+        orphan.standardOutput = FileHandle.nullDevice; orphan.standardError = FileHandle.nullDevice
+        try! orphan.run()
+        procs.append(orphan)
+        XCTAssertTrue(TestServers.waitForPort(port))
+        ChildRegistry(defaults: defaults).record(pid: orphan.processIdentifier, socksPort: port)
+
+        // An unrelated live process recorded under a port it does not serve.
+        let bystander = Process()
+        bystander.executableURL = URL(fileURLWithPath: "/bin/sleep"); bystander.arguments = ["30"]
+        try! bystander.run(); procs.append(bystander)
+        ChildRegistry(defaults: defaults).record(pid: bystander.processIdentifier, socksPort: 1)
+
+        let m = TunnelManager(defaults: defaults, sshPath: fakeSSH)
+        manager = m
+        m.start()
+        XCTAssertTrue(wait(5) { !orphan.isRunning }, "orphan should have been reaped")
+        XCTAssertTrue(bystander.isRunning, "a process whose command line doesn't match must be left alone")
+    }
+
+    /// The SOCKS port kept from last time has been taken in the meantime: the
+    /// tunnel must move rather than fail to bind -- or, worse, report the
+    /// stranger's listener as connected.
+    func testPersistedSOCKSPortTakenAtRelaunchIsReassigned() {
+        let first = TunnelManager(defaults: defaults, sshPath: fakeSSH)
+        first.httpPort = TestServers.freePort()
+        first.socksBasePort = TestServers.freePort()
+        let config = first.add(target: "good-host")
+        XCTAssertTrue(wait { first.state(of: config.id) == .connected })
+        first.stopAll()
+        XCTAssertTrue(wait(3) { !TestServers.waitForPort(config.socksPort, seconds: 0.2) })
+
+        // Something else takes the port before the next launch.
+        procs.append(TestServers.python("socks5-server.py", [String(config.socksPort)]))
+        XCTAssertTrue(TestServers.waitForPort(config.socksPort))
+
+        let second = TunnelManager(defaults: defaults, sshPath: fakeSSH)
+        manager = second
+        second.socksBasePort = first.socksBasePort
+        second.start()
+        XCTAssertTrue(wait { second.state(of: config.id) == .connected })
+        let moved = second.configs.first { $0.id == config.id }!
+        XCTAssertNotEqual(moved.socksPort, config.socksPort, "must not sit on the squatter's port")
+    }
+
+    /// First use picks the first free HTTP port; a port taken later is reported
+    /// and can be moved, taking the bridge with it.
+    func testHTTPPortCollisionIsReportedAndMovable() {
+        let busy = TestServers.freePort()
+        procs.append(TestServers.python("socks5-server.py", [String(busy)]))   // squatter on the HTTP port
+        XCTAssertTrue(TestServers.waitForPort(busy))
+
+        let m = TunnelManager(defaults: defaults, sshPath: fakeSSH)
+        manager = m
+        m.socksBasePort = TestServers.freePort()
+        m.httpPort = busy                                   // as if kept from last time
+        m.add(target: "good-host")
+        XCTAssertTrue(wait { m.bridgeError != nil }, "a taken port must be reported")
+        XCTAssertNil(m.proxyServer)
+        XCTAssertTrue(m.bridgePortOwner?.lowercased().contains("python") == true, "\(m.bridgePortOwner ?? "-")")
+
+        let moved = m.moveBridgeToFreePort()
+        XCTAssertNotEqual(moved, busy)
+        XCTAssertEqual(m.httpPort, moved)
+        XCTAssertTrue(wait { m.proxyServer?.port == Int(moved) }, "bridge should listen on the new port")
+    }
+
     func testAllGaveUpOnlyWhenEveryEnabledTunnelHas() {
         let m = TunnelManager(defaults: defaults, sshPath: fakeSSH)
         manager = m
