@@ -154,17 +154,17 @@ public final class ProxyController {
     /// why no site-specific hostname appears in Siphon's source.
     private func refreshServers() {
         var servers = customServers
-        // Tunnels are selectable from their own section; keep their addresses
-        // out of the plain list so nothing appears twice.
-        servers.removeAll { tunnels.isTunnelProxy($0) }
         if discoversServers {
             for discovered in NetworkState.discoverServers() where !servers.contains(discovered) {
                 servers.append(discovered)
             }
         }
-        if let server, !servers.contains(server), !tunnels.isTunnelProxy(server) {
-            servers.insert(server, at: 0)
-        }
+        if let server, !servers.contains(server) { servers.insert(server, at: 0) }
+        // Tunnels have their own rows; their addresses must not also appear as
+        // plain servers. This runs last because discovery reads the system
+        // proxy settings back, and when the system points at a tunnel that is
+        // exactly where its address comes from.
+        servers.removeAll { tunnels.isTunnelProxy($0) }
         knownServers = servers
         // First run: adopt what this service is already pointed at. Waiting for
         // a service beats guessing from an unrelated discovered proxy that
