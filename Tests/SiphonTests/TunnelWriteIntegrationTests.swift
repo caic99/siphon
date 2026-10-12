@@ -73,6 +73,8 @@ final class TunnelWriteIntegrationTests: XCTestCase {
         let written = write(.enable(server), existing: ProxyDictionary())
         XCTAssertTrue(written.isOn)
         XCTAssertEqual(written.server, server)
-        XCTAssertEqual(written.entries.count, 6)
+        // Six HTTP/HTTPS keys plus SOCKSEnable=0: a plain server clears SOCKS.
+        XCTAssertEqual(written.entries.count, 7)
+        XCTAssertFalse(written.isSOCKSOn)
     }
 }

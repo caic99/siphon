@@ -97,6 +97,36 @@ final class ProxyDictionaryTests: XCTestCase {
         XCTAssertEqual(cleared.entries["HTTPSEnable"], .number(0))
     }
 
+    // MARK: - SOCKS
+
+    func testTunnelServerWritesSOCKSAndPlainServerClearsIt() {
+        let tunnel = ProxyServer(host: "127.0.0.1", port: 7891, socksPort: 18081)
+        let on = ProxyDictionary().enabling(tunnel)
+        XCTAssertEqual(on.entries["SOCKSEnable"], .number(1))
+        XCTAssertEqual(on.entries["SOCKSProxy"], .string("127.0.0.1"))
+        XCTAssertEqual(on.entries["SOCKSPort"], .number(18081))
+        XCTAssertTrue(on.satisfies(tunnel))
+
+        // Switching to a plain server must not leave the tunnel's SOCKS behind.
+        let plain = ProxyServer(host: "proxy.example.com", port: 3128)
+        let moved = on.enabling(plain)
+        XCTAssertEqual(moved.entries["SOCKSEnable"], .number(0))
+        XCTAssertTrue(moved.satisfies(plain))
+        XCTAssertFalse(on.satisfies(plain))
+
+        XCTAssertEqual(on.disabled().entries["SOCKSEnable"], .number(0))
+    }
+
+    /// Equality ignores the SOCKS port on purpose; satisfaction must not.
+    func testSatisfiesSeesTheSOCKSSideEqualityIgnores() {
+        let tunnel = ProxyServer(host: "127.0.0.1", port: 7891, socksPort: 18081)
+        let sameAddressNoSOCKS = ProxyServer(host: "127.0.0.1", port: 7891)
+        XCTAssertEqual(tunnel, sameAddressNoSOCKS)
+        let httpOnly = ProxyDictionary().enabling(sameAddressNoSOCKS)
+        XCTAssertFalse(httpOnly.satisfies(tunnel))
+        XCTAssertTrue(httpOnly.satisfies(sameAddressNoSOCKS))
+    }
+
     // MARK: - Encoding
 
     func testEncodesEachValueKind() {

@@ -34,6 +34,9 @@ public struct ProxyDictionary: Equatable, Sendable {
         static let httpsEnable = "HTTPSEnable"
         static let httpsProxy = "HTTPSProxy"
         static let httpsPort = "HTTPSPort"
+        static let socksEnable = "SOCKSEnable"
+        static let socksProxy = "SOCKSProxy"
+        static let socksPort = "SOCKSPort"
     }
 
     // MARK: - Reading
@@ -98,8 +101,38 @@ public struct ProxyDictionary: Equatable, Sendable {
         copy.entries[Key.httpsEnable] = .number(1)
         copy.entries[Key.httpsProxy] = .string(server.host)
         copy.entries[Key.httpsPort] = .number(server.port)
+        if let socks = server.socksPort {
+            copy.entries[Key.socksEnable] = .number(1)
+            copy.entries[Key.socksProxy] = .string(server.host)
+            copy.entries[Key.socksPort] = .number(socks)
+        } else {
+            // A plain server has no SOCKS side; make sure a tunnel's does not
+            // outlive the switch away from it.
+            copy.entries[Key.socksEnable] = .number(0)
+        }
         return copy
     }
+
+    /// True when the dictionary already says what `server` would write --
+    /// HTTP on at that address, and the SOCKS side matching (on at the
+    /// server's SOCKS port, or off when the server has none). Equality on
+    /// ProxyServer deliberately ignores the SOCKS port, so this is the check
+    /// the policy must use.
+    public func satisfies(_ server: ProxyServer) -> Bool {
+        guard isOn, self.server == server else { return false }
+        if let socks = server.socksPort {
+            return isSOCKSOn && socksServer?.host == server.host && socksServer?.port == socks
+        }
+        return !isSOCKSOn
+    }
+
+    /// The configured SOCKS proxy, whether or not it is enabled.
+    public var socksServer: (host: String, port: Int)? {
+        guard case .string(let host)? = entries[Key.socksProxy],
+              case .number(let port)? = entries[Key.socksPort] else { return nil }
+        return (host, port)
+    }
+    public var isSOCKSOn: Bool { entries[Key.socksEnable] == .number(1) }
 
     /// Mirrors `networksetup -setwebproxystate off`: clears the enable flags and
     /// leaves host and port in place, so re-enabling by hand keeps the server.
@@ -107,6 +140,7 @@ public struct ProxyDictionary: Equatable, Sendable {
         var copy = self
         copy.entries[Key.httpEnable] = .number(0)
         copy.entries[Key.httpsEnable] = .number(0)
+        copy.entries[Key.socksEnable] = .number(0)
         return copy
     }
 

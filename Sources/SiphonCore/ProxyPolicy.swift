@@ -67,7 +67,10 @@ public enum ProxyPolicy {
         if desiredOn {
             guard let server else { return .unavailable }
             if current.isOn {
-                if current.server == server { return .satisfied }
+                if current.satisfies(server) { return .satisfied }
+                // Same address, only the SOCKS side differs (a tunnel selected
+                // before SOCKS was written, or vice versa): that is ours to fix.
+                if current.server == server { return gated(.enable(server)) }
                 // A proxy is already working here under a different server.
                 // Swapping it is a decision, not a reconciliation — including on
                 // a service Siphon set up earlier, because the stored selection
@@ -110,18 +113,28 @@ public enum ProxyPolicy {
         switch intent {
         case .enable(let server):
             let port = String(server.port)
-            return [
+            var commands = [
                 PrivilegedCommand(path: networksetup,
                                   arguments: ["-setwebproxy", target.name, server.host, port]),
                 PrivilegedCommand(path: networksetup,
                                   arguments: ["-setsecurewebproxy", target.name, server.host, port]),
             ]
+            if let socks = server.socksPort {
+                commands.append(PrivilegedCommand(path: networksetup,
+                    arguments: ["-setsocksfirewallproxy", target.name, server.host, String(socks)]))
+            } else {
+                commands.append(PrivilegedCommand(path: networksetup,
+                    arguments: ["-setsocksfirewallproxystate", target.name, "off"]))
+            }
+            return commands
         case .disable:
             return [
                 PrivilegedCommand(path: networksetup,
                                   arguments: ["-setwebproxystate", target.name, "off"]),
                 PrivilegedCommand(path: networksetup,
                                   arguments: ["-setsecurewebproxystate", target.name, "off"]),
+                PrivilegedCommand(path: networksetup,
+                                  arguments: ["-setsocksfirewallproxystate", target.name, "off"]),
             ]
         }
     }

@@ -73,7 +73,7 @@ public final class TunnelManager {
 
     /// The address a tunnel's proxy has, whether or not it is listening.
     public func proxyAddress(for config: TunnelConfig) -> ProxyServer {
-        ProxyServer(host: "127.0.0.1", port: Int(config.httpPort))
+        ProxyServer(host: "127.0.0.1", port: Int(config.httpPort), socksPort: Int(config.socksPort))
     }
 
     /// The address clients can use right now; nil until its bridge listens.

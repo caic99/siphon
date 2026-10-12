@@ -95,7 +95,12 @@ public final class ProxyController {
     }
 
     public private(set) var server: ProxyServer? {
-        get { decode(ProxyServer.self, Key.selectedServer) }
+        get {
+            guard let stored = decode(ProxyServer.self, Key.selectedServer) else { return nil }
+            // Tunnels carry a SOCKS port that is not persisted; look it up.
+            if let config = tunnels.tunnel(forProxy: stored) { return tunnels.proxyAddress(for: config) }
+            return stored
+        }
         set { encode(newValue, Key.selectedServer) }
     }
 

@@ -8,14 +8,25 @@ import Foundation
 public struct ProxyServer: Equatable, Hashable, Codable, Sendable {
     public let host: String
     public let port: Int
+    /// A SOCKS5 port on the same host, when the server offers one -- SSH
+    /// tunnels do. Written to the system's SOCKS proxy fields alongside
+    /// HTTP/HTTPS, so apps that prefer SOCKS skip the HTTP bridge. Not part
+    /// of equality and not persisted: the same address is the same server,
+    /// and tunnels supply the port live.
+    public var socksPort: Int? = nil
+
+    public static func == (a: ProxyServer, b: ProxyServer) -> Bool { a.host == b.host && a.port == b.port }
+    public func hash(into h: inout Hasher) { h.combine(host); h.combine(port) }
+    private enum CodingKeys: String, CodingKey { case host, port }
 
     /// What an omitted port means in the Custom… field. Squid's conventional
     /// port, not a Siphon-specific choice.
     public static let defaultPort = 3128
 
-    public init(host: String, port: Int) {
+    public init(host: String, port: Int, socksPort: Int? = nil) {
         self.host = host
         self.port = port
+        self.socksPort = socksPort
     }
 
     public var display: String { "\(host):\(port)" }

@@ -38,6 +38,10 @@ changed underneath it.
   export HTTPS_PROXY=http://proxy.example.com:3128
   ```
 
+  When the selected proxy is an SSH tunnel, a third line is added —
+  `export ALL_PROXY=socks5h://127.0.0.1:<socks port>` — so tools that honour it
+  go straight to the tunnel's SOCKS5 and resolve names at the far end.
+
   Note that `curl` ignores the uppercase `HTTP_PROXY` on purpose — its httpoxy
   mitigation — so plain-`http://` requests through curl are not proxied by this
   block. `HTTPS_PROXY` is honoured, as are both by most other tools.
@@ -79,8 +83,9 @@ is never in question. Several can be connected at once; switching is a click.
 In the menu, a tunnel row *is* that proxy:
 
 - **Click** a tunnel to point the system proxy at it (connecting it first if it
-  was off). ✓ marks the one in use; the dot shows state; its port is shown
-  after the name — that's the number to give other tools.
+  was off). ✓ marks the one in use; the dot shows state; hover for its ports.
+  When a tunnel is the system proxy, its SOCKS5 port is written to the system's
+  SOCKS proxy setting too, so apps that prefer SOCKS skip the HTTP bridge.
 - **Hold ⌥** and the rows become *Connect …* / *Disconnect …*.
 - Adding and removing live in their own segment below: **Add Proxy Server…**,
   **Add SSH Tunnel…** and **Remove ▸** (added servers and tunnels; discovered

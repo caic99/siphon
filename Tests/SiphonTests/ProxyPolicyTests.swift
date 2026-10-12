@@ -90,6 +90,26 @@ final class ProxyPolicyTests: XCTestCase {
                        .write(.enable(ours)))
     }
 
+    /// HTTP already points at the tunnel but SOCKS was never written: not
+    /// "satisfied", and not someone else's proxy either -- rewrite it.
+    func testMissingSOCKSOnOurOwnAddressIsRewrittenEvenAutomatically() {
+        let tunnel = ProxyServer(host: "127.0.0.1", port: 7891, socksPort: 18081)
+        let httpOnly = ProxyDictionary().enabling(ProxyServer(host: "127.0.0.1", port: 7891))
+        XCTAssertEqual(plan(desiredOn: true, server: tunnel, current: httpOnly), .write(.enable(tunnel)))
+        XCTAssertEqual(plan(desiredOn: true, server: tunnel, current: ProxyDictionary().enabling(tunnel)), .satisfied)
+    }
+
+    func testNetworksetupWritesAndClearsSOCKS() {
+        let target = ProxyTarget(serviceID: "DEF", name: "Wi-Fi", isTunnel: false)
+        let tunnel = ProxyServer(host: "127.0.0.1", port: 7891, socksPort: 18081)
+        let on = ProxyPolicy.commands(for: .enable(tunnel), on: target, existing: ProxyDictionary()).map(\.arguments)
+        XCTAssertTrue(on.contains(["-setsocksfirewallproxy", "Wi-Fi", "127.0.0.1", "18081"]), "\(on)")
+        let plain = ProxyPolicy.commands(for: .enable(ours), on: target, existing: ProxyDictionary()).map(\.arguments)
+        XCTAssertTrue(plain.contains(["-setsocksfirewallproxystate", "Wi-Fi", "off"]), "\(plain)")
+        let off = ProxyPolicy.commands(for: .disable, on: target, existing: ProxyDictionary()).map(\.arguments)
+        XCTAssertTrue(off.contains(["-setsocksfirewallproxystate", "Wi-Fi", "off"]), "\(off)")
+    }
+
     // MARK: - Someone else's proxy
 
     func testAutomaticApplyRefusesToOverwriteAProxyWeDidNotSet() {
@@ -173,6 +193,7 @@ final class ProxyPolicyTests: XCTestCase {
         XCTAssertEqual(enable.map(\.arguments), [
             ["-setwebproxy", "USB 10/100/1000 LAN", "proxy.example.com", "3128"],
             ["-setsecurewebproxy", "USB 10/100/1000 LAN", "proxy.example.com", "3128"],
+            ["-setsocksfirewallproxystate", "USB 10/100/1000 LAN", "off"],   // plain server: no SOCKS
         ])
         XCTAssertTrue(enable.allSatisfy { $0.path == "/usr/sbin/networksetup" && $0.input == nil })
 
@@ -180,6 +201,7 @@ final class ProxyPolicyTests: XCTestCase {
         XCTAssertEqual(disable.map(\.arguments), [
             ["-setwebproxystate", "USB 10/100/1000 LAN", "off"],
             ["-setsecurewebproxystate", "USB 10/100/1000 LAN", "off"],
+            ["-setsocksfirewallproxystate", "USB 10/100/1000 LAN", "off"],
         ])
     }
 }

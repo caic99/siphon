@@ -12,6 +12,16 @@ final class ShellExportsTests: XCTestCase {
     }
 
     /// A proxy is reached over http even when it proxies https traffic.
+    func testTunnelAddsASOCKSExport() {
+        let tunnel = ProxyServer(host: "127.0.0.1", port: 7891, socksPort: 18081)
+        XCTAssertEqual(ShellExports.commands(for: tunnel), """
+        export HTTP_PROXY=http://127.0.0.1:7891
+        export HTTPS_PROXY=http://127.0.0.1:7891
+        export ALL_PROXY=socks5h://127.0.0.1:18081
+        """)
+        XCTAssertFalse(ShellExports.commands(for: server).contains("ALL_PROXY"), "plain servers have no SOCKS side")
+    }
+
     func testProxyURLIsAlwaysHTTP() {
         XCTAssertFalse(ShellExports.commands(for: server).contains("https://proxy"))
     }

@@ -456,9 +456,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return "Couldn't apply"
         case nil:
             if controller.isSuspendedForTunnels { return "Paused · tunnel down" }
-            if let config = controller.tunnels.tunnel(forProxy: controller.server) {
-                return "via \(Self.shortTarget(config.target)) · \(primary.name)"
-            }
             return primary.name
         }
     }
@@ -523,7 +520,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.representedObject = config.id
             item.state = selectedID == config.id ? .on : .off
             item.image = Self.stateDot(bridgeError == nil ? color : .systemRed)
-            item.attributedTitle = Self.tunnelTitle(config.target, port: config.httpPort)
             item.toolTip = "\(detail)\nHTTP :\(config.httpPort) · SOCKS5 :\(config.socksPort)"
                 + (bridgeError.map { "\nProxy not listening: \($0)"
                     + (tunnels.bridgePortOwner(for: config.id).map { " — port held by \($0)" } ?? "") } ?? "")
@@ -556,24 +552,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !added.isEmpty, !tunnels.configs.isEmpty { removeMenu.addItem(.separator()) }
         for config in tunnels.configs {
             let item = NSMenuItem(title: config.target, action: #selector(removeTunnel(_:)), keyEquivalent: "")
-            item.attributedTitle = Self.tunnelTitle(config.target, port: config.httpPort)
             item.target = self
             item.representedObject = config.id
             removeMenu.addItem(item)
         }
         removeItem.isHidden = added.isEmpty && tunnels.configs.isEmpty
-    }
-
-    /// Target in the normal weight, its proxy port after it in the secondary
-    /// colour -- the number people type into other tools, without a second row.
-    private static func tunnelTitle(_ target: String, port: UInt16) -> NSAttributedString {
-        let title = NSMutableAttributedString(string: target, attributes: [
-            .font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.labelColor,
-        ])
-        title.append(NSAttributedString(string: "   :\(port)", attributes: [
-            .font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor,
-        ]))
-        return title
     }
 
     private static func format(_ interval: TimeInterval) -> String {
