@@ -92,10 +92,9 @@ re-apply, **Copy Shell Exports** and `--exports` all work as for any proxy.
 - **The bridge binds loopback only** and speaks plain HTTP proxy: `CONNECT`
   for HTTPS, absolute-URI requests rewritten to origin-form for HTTP.
 
-The behaviour is a native reimplementation of
-[tunnelmux](https://github.com/caic99/tunnelmux)'s: same ports, same retry
-cadence, same proxy-off-when-all-down rule — minus its
-`StrictHostKeyChecking=no`.
+The behaviour is a native reimplementation of an earlier Python tool of mine,
+tunnelmux: same ports, same retry cadence, same proxy-off-when-all-down rule —
+minus its `StrictHostKeyChecking=no`.
 
 `--probe` lists tunnels and the bridge. To exercise a real host once:
 
