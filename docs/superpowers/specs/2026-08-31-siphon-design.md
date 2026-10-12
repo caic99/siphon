@@ -177,10 +177,12 @@ running anything on them. Reimplements `tunnelmux.py` natively; its decisions
 are kept, its code is not.
 
 **Shape.** Each configured target gets its own `ssh -N -D 127.0.0.1:<socks>`
-process (ports from 18081). One HTTP proxy on `127.0.0.1:7890` fronts them all,
-round-robining each request across whichever tunnels are connected. That
-address joins the Proxy Server list, so the switch, re-apply, exports and the
-CLI treat it like any other proxy.
+process (ports from 18081) and its own loopback HTTP proxy (ports from 7890).
+Nothing is balanced across tunnels — rejected after a first version did: it
+hides which host traffic exits from, and a stuck tunnel silently takes a share
+of requests. The system proxy points at one tunnel at a time; several may be
+connected. A tunnel row in the menu is that proxy: click selects it, ⌥ toggles
+the connection, removal is a submenu.
 
 **ssh flags.** `-N` (no remote command), `-D` bound to loopback,
 `BatchMode=yes`, `ExitOnForwardFailure=yes`, `ConnectTimeout=15`,
@@ -199,10 +201,20 @@ URI requests are rewritten to origin-form with hop-by-hop proxy headers
 removed and `Connection: close`. 503 when no tunnel is connected, 502 when
 the origin cannot be reached. Loopback only.
 
-**System-proxy policy (chosen).** If the system proxy points at the bridge
-and every enabled tunnel has given up, turn the proxy off so traffic goes
-direct; when a tunnel comes back, turn it on again. Both are automatic
-writes, so they run only when sudo is silent.
+**System-proxy policy (chosen).** If the system proxy points at a tunnel and
+that tunnel has given up, turn the proxy off so traffic goes direct; when it
+comes back, turn the proxy on again. Both are automatic writes, so they run
+only when sudo is silent.
+
+**Child processes.** No wrapper: a shell supervisor that leashed ssh to the
+app tripped Microsoft Defender (SuspiciousRevShell). Instead the app handles
+SIGTERM/SIGINT/SIGHUP and stops children; a persisted registry of child pids
+and ports lets the next launch reap a crash's leftovers, matching on the
+`-D 127.0.0.1:<port>` in the command line so a recycled pid is left alone.
+
+**Ports.** SOCKS ports are reassigned if taken when a tunnel launches. HTTP
+ports are user-facing, so a taken one is reported with its owner and moved
+only on request.
 
 **Tests.** Parser and SOCKS5 wire format as pure units; the bridge end to end
 with a real SOCKS5 server and origin, driven by curl (`--noproxy ""`, since a

@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var copyExportsItem: NSMenuItem!
     private var tunnelsHeaderItem: NSMenuItem!
     private var addTunnelItem: NSMenuItem!
-    private var movePortItem: NSMenuItem!
+    private var removeTunnelItem: NSMenuItem!
     private var tunnelItems: [NSMenuItem] = []
     private var reapplyItem: NSMenuItem!
     private var serverItems: [NSMenuItem] = []
@@ -120,15 +120,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                    keyEquivalent: "")
         addTunnelItem.target = self
         addTunnelItem.toolTip = "ssh -N -D to a host from your ssh config (keys or agent; no prompts). "
-            + "Connected tunnels are load-balanced behind one local HTTP proxy, which then "
-            + "appears under Proxy Server."
+            + "Each tunnel is its own local HTTP proxy: click a tunnel to point the system at it, "
+            + "hold ⌥ to connect or disconnect it."
         menu.addItem(addTunnelItem)
-        // Shown only while the bridge's port is taken by something else.
-        movePortItem = NSMenuItem(title: "Move Proxy to Free Port", action: #selector(moveProxyPort),
-                                  keyEquivalent: "")
-        movePortItem.target = self
-        movePortItem.image = NSImage(systemSymbolName: "arrow.right.to.line", accessibilityDescription: nil)
-        menu.addItem(movePortItem)
+        removeTunnelItem = NSMenuItem(title: "Remove Tunnel", action: nil, keyEquivalent: "")
+        removeTunnelItem.submenu = NSMenu()
+        menu.addItem(removeTunnelItem)
         menu.addItem(.separator())
 
         copyExportsItem = NSMenuItem(title: "Copy Shell Exports",
@@ -314,12 +311,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.tunnels.remove(id)
     }
 
-    @objc private func moveProxyPort() {
-        controller.moveTunnelProxyToFreePort()
-    }
-
-    @objc private func useTunnelsAsProxy() {
-        controller.select(ProxyServer(host: "127.0.0.1", port: Int(controller.tunnels.httpPort)))
+    /// Point the system proxy at this tunnel. Using a tunnel implies wanting
+    /// it up, so a disconnected or given-up one is started too. A port that
+    /// something else holds is dealt with here, when it actually matters,
+    /// rather than moved behind the user's back.
+    @objc private func useTunnelAsProxy(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID,
+              let config = controller.tunnels.configs.first(where: { $0.id == id }) else { return }
+        let tunnels = controller.tunnels
+        if let error = tunnels.bridgeError(for: id) {
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = "Port \(config.httpPort) is in use"
+            alert.informativeText = "This tunnel's proxy can't listen on 127.0.0.1:\(config.httpPort) (\(error))"
+                + (tunnels.bridgePortOwner(for: id).map { " — it's held by \($0)" } ?? "")
+                + ". Move it to the next free port? Exports and anything else pointing at the "
+                + "old port will need updating."
+            alert.addButton(withTitle: "Move Port")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            controller.moveTunnelProxyToFreePort(id)
+        }
+        if !config.enabled { tunnels.setEnabled(id, true) }
+        if case .gaveUp = tunnels.state(of: id) { tunnels.retry(id) }
+        controller.select(tunnels.proxyAddress(for: tunnels.configs.first { $0.id == id } ?? config))
     }
 
     @objc private func addCustomServer() {
@@ -429,7 +444,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .failed:
             return "Couldn't apply"
         case nil:
-            return controller.isSuspendedForTunnels ? "Paused · tunnels down" : primary.name
+            if controller.isSuspendedForTunnels { return "Paused · tunnel down" }
+            if let config = controller.tunnels.tunnel(forProxy: controller.server) {
+                return "via \(Self.shortTarget(config.target)) · \(primary.name)"
+            }
+            return primary.name
         }
     }
 
@@ -441,6 +460,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggleItem.image = NSImage(systemSymbolName: active ? "stop.circle" : "play.circle",
                                    accessibilityDescription: active ? "Turn off" : "Turn on")
         toggleItem.isEnabled = controller.canToggle
+    }
+
+    /// "user@long.host.name" -> "long". The full target stays in tooltips.
+    private static func shortTarget(_ target: String) -> String {
+        let host = target.split(separator: "@").last.map(String.init) ?? target
+        let first = host.split(separator: ".").first.map(String.init) ?? host
+        return first.isEmpty ? host : first
     }
 
     private static func stateDot(_ color: NSColor) -> NSImage? {
@@ -455,27 +481,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let tunnels = controller.tunnels
         for item in tunnelItems { menu.removeItem(item) }
         tunnelItems = []
-        if tunnels.enabledCount == 0 {
-            tunnelsHeaderItem.title = "SSH Tunnels"
-            tunnelsHeaderItem.toolTip = nil
-            movePortItem.isHidden = true
-        } else if let error = tunnels.bridgeError {
-            let owner = tunnels.bridgePortOwner.map { " by \($0)" } ?? ""
-            tunnelsHeaderItem.title = "SSH Tunnels · port \(tunnels.httpPort) in use"
-            tunnelsHeaderItem.toolTip = "Local proxy not listening (\(error))\(owner). "
-                + "Tunnels are up but nothing is served on 127.0.0.1:\(tunnels.httpPort) by Siphon."
-            movePortItem.isHidden = false
-            movePortItem.title = "Move Proxy to Free Port (\(TunnelManager.firstFreePort(from: tunnels.httpPort &+ 1)))"
-        } else {
-            tunnelsHeaderItem.title = "SSH Tunnels · http://127.0.0.1:\(tunnels.httpPort)"
-            tunnelsHeaderItem.toolTip = nil
-            movePortItem.isHidden = true
-        }
+        tunnelsHeaderItem.title = "SSH Tunnels"
+        tunnelsHeaderItem.toolTip = nil
 
         guard let insertionIndex = menu.items.firstIndex(of: addTunnelItem) else { return }
-        for (offset, config) in tunnels.configs.enumerated() {
+        let selectedID = tunnels.tunnel(forProxy: controller.server)?.id
+        var offset = 0
+        for config in tunnels.configs {
             let state = tunnels.state(of: config.id)
-            let item = NSMenuItem(title: config.target, action: nil, keyEquivalent: "")
             let (color, detail): (NSColor, String)
             switch state {
             case .connected:
@@ -486,41 +499,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case .reconnecting(let reason, let attempt):
                 (color, detail) = (.systemOrange, "Reconnecting (\(attempt)/3): \(reason)")
             case .gaveUp(let reason):
-                (color, detail) = (.systemRed, "Gave up: \(reason)")
+                (color, detail) = (.systemRed, "Gave up: \(reason) — click to retry")
             case .idle:
                 (color, detail) = (config.enabled ? .systemYellow : .tertiaryLabelColor,
-                                   config.enabled ? "Starting…" : "Disconnected")
+                                   config.enabled ? "Starting…" : "Disconnected — click to connect and use")
             }
-            item.image = Self.stateDot(color)
-            item.toolTip = "\(detail)\nSOCKS5 on 127.0.0.1:\(config.socksPort)"
+            let bridgeError = tunnels.bridgeError(for: config.id)
 
-            let sub = NSMenu()
-            let toggle = NSMenuItem(title: config.enabled ? "Disconnect" : "Connect",
-                                    action: #selector(toggleTunnel(_:)), keyEquivalent: "")
-            toggle.target = self; toggle.representedObject = config.id
-            sub.addItem(toggle)
-            if case .gaveUp = state {
-                let retry = NSMenuItem(title: "Retry Now", action: #selector(retryTunnel(_:)), keyEquivalent: "")
-                retry.target = self; retry.representedObject = config.id
-                sub.addItem(retry)
-            }
-            let status = NSMenuItem(title: detail, action: nil, keyEquivalent: "")
-            status.isEnabled = false
-            sub.addItem(status)
-            sub.addItem(.separator())
-            let use = NSMenuItem(title: "Use Tunnels as System Proxy", action: #selector(useTunnelsAsProxy),
-                                 keyEquivalent: "")
-            use.target = self
-            use.state = tunnels.isTunnelProxy(controller.server) ? .on : .off
-            sub.addItem(use)
-            let remove = NSMenuItem(title: "Remove", action: #selector(removeTunnel(_:)), keyEquivalent: "")
-            remove.target = self; remove.representedObject = config.id
-            sub.addItem(remove)
-            item.submenu = sub
-
-            menu.insertItem(item, at: insertionIndex + offset)
+            // The row is the proxy: click selects it, ✓ marks the selected one.
+            let item = NSMenuItem(title: config.target, action: #selector(useTunnelAsProxy(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = config.id
+            item.state = selectedID == config.id ? .on : .off
+            item.image = Self.stateDot(bridgeError == nil ? color : .systemRed)
+            item.attributedTitle = Self.tunnelTitle(config.target, port: config.httpPort)
+            item.toolTip = "\(detail)\nHTTP proxy 127.0.0.1:\(config.httpPort) · SOCKS5 127.0.0.1:\(config.socksPort)"
+                + (bridgeError.map { "\nProxy not listening: \($0)"
+                    + (tunnels.bridgePortOwner(for: config.id).map { " — port held by \($0)" } ?? "") } ?? "")
+            menu.insertItem(item, at: insertionIndex + offset); offset += 1
             tunnelItems.append(item)
+
+            // ⌥ swaps the row for connect/disconnect.
+            let alt = NSMenuItem(title: (config.enabled ? "Disconnect " : "Connect ") + Self.shortTarget(config.target),
+                                 action: #selector(toggleTunnel(_:)), keyEquivalent: "")
+            alt.target = self
+            alt.representedObject = config.id
+            alt.isAlternate = true
+            alt.keyEquivalentModifierMask = [.option]
+            alt.image = item.image
+            menu.insertItem(alt, at: insertionIndex + offset); offset += 1
+            tunnelItems.append(alt)
         }
+
+        // Removal lives in one submenu so a stray click can't do it.
+        let removeMenu = removeTunnelItem.submenu!
+        removeMenu.removeAllItems()
+        for config in tunnels.configs {
+            let item = NSMenuItem(title: config.target, action: #selector(removeTunnel(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = config.id
+            removeMenu.addItem(item)
+        }
+        removeTunnelItem.isHidden = tunnels.configs.isEmpty
+    }
+
+    /// Target in the normal weight, its proxy port after it in the secondary
+    /// colour -- the number people type into other tools, without a second row.
+    private static func tunnelTitle(_ target: String, port: UInt16) -> NSAttributedString {
+        let title = NSMutableAttributedString(string: target, attributes: [
+            .font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.labelColor,
+        ])
+        title.append(NSAttributedString(string: "   :\(port)", attributes: [
+            .font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor,
+        ]))
+        return title
     }
 
     private static func format(_ interval: TimeInterval) -> String {
@@ -561,11 +594,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let servers = controller.knownServers
         let labels = ServerLabels.labels(for: servers)
         for (offset, server) in servers.enumerated() {
-            var label = labels[offset]
-            if controller.tunnels.isTunnelProxy(server) {
-                let n = controller.tunnels.connectedCount
-                label = "SSH Tunnels · \(server.display)" + (n == 0 ? "" : "  (\(n) up)")
-            }
+            let label = labels[offset]
             let item = NSMenuItem(title: label, action: #selector(selectServer(_:)),
                                   keyEquivalent: "")
             item.target = self

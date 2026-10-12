@@ -41,8 +41,8 @@ changed underneath it.
   Note that `curl` ignores the uppercase `HTTP_PROXY` on purpose — its httpoxy
   mitigation — so plain-`http://` requests through curl are not proxied by this
   block. `HTTPS_PROXY` is honoured, as are both by most other tools.
-- **SSH tunnels built in**: `ssh -N -D` to hosts from your config, kept alive
-  and load-balanced behind one local HTTP proxy you can switch the system to.
+- **SSH tunnels built in**: `ssh -N -D` to hosts from your config, kept alive,
+  each behind its own local HTTP proxy you can switch the system to.
 - **No hard-coded servers**: the menu lists the proxies already configured on
   this Mac, plus every one you have used or added under **Custom…** — so
   switching away from a server does not lose it.
@@ -61,42 +61,57 @@ System Settings → General → Login Items.
 
 ## SSH tunnels
 
-For hosts you can only reach over SSH, Siphon can be the proxy itself. **Add
-SSH Tunnel…** takes anything you'd type after `ssh` — a `~/.ssh/config` alias
-or `user@host` — and runs
+For hosts you can only reach over SSH, a tunnel can be the proxy. **Add SSH
+Tunnel…** takes anything you'd type after `ssh` — a `~/.ssh/config` alias or
+`user@host` — and runs
 
 ```
-ssh -N -D 127.0.0.1:<port> -o BatchMode=yes -o ExitOnForwardFailure=yes \
+ssh -N -D 127.0.0.1:<socks> -o BatchMode=yes -o ExitOnForwardFailure=yes \
     -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 <host>
 ```
 
-`-N` runs no remote command; `-D` is client-side dynamic forwarding. Each
-tunnel gets a SOCKS5 port from 18081 up, and one local HTTP proxy on
-`127.0.0.1:7890` fronts all of them, round-robining requests across whichever
-are connected. That address appears under **Proxy Server** — pick it (or
-**Use Tunnels as System Proxy** from a tunnel's submenu) and the switch, auto
-re-apply, **Copy Shell Exports** and `--exports` all work as for any proxy.
+`-N` runs no remote command; `-D` is client-side dynamic forwarding. **Each
+tunnel is its own proxy**: it gets a SOCKS5 port (from 18081) and a loopback
+HTTP proxy in front of it (from 7890), and nothing is balanced across tunnels —
+the system proxy points at exactly one host at a time, so where traffic exits
+is never in question. Several can be connected at once; switching is a click.
 
-- **Status you can trust.** A tunnel counts as connected only once its SOCKS
-  port accepts a connection — ssh binds it after authentication, so no output
-  is parsed. Health is re-checked every 45 s; a failed tunnel retries after 8 s,
-  three times, then stops until **Retry Now** or the network changes.
-- **When every tunnel is down**, and the system proxy points at them, Siphon
-  turns the proxy off so traffic goes direct rather than failing, and turns it
-  back on when a tunnel returns. Like all automatic writes, this runs only
-  with passwordless sudo; otherwise the icon goes orange and waits for you.
+In the menu, a tunnel row *is* that proxy:
+
+- **Click** a tunnel to point the system proxy at it (connecting it first if it
+  was off). ✓ marks the one in use; the dot shows state; its port is shown
+  after the name — that's the number to give other tools.
+- **Hold ⌥** and the rows become *Connect …* / *Disconnect …*.
+- **Remove Tunnel ▸** lives in its own submenu, where a stray click can't reach.
+- **Copy Shell Exports** and `--exports` follow whichever proxy is selected,
+  tunnel or not.
+
+What it does for you:
+
+- **Status you can trust.** A tunnel is connected only once its SOCKS port
+  accepts a connection — ssh binds it after authentication, so no output is
+  parsed. Health is re-checked every 45 s; a failed tunnel retries after 8 s,
+  three times, then stops until clicked or the network changes.
+- **If the tunnel you're using goes down** and stays down, Siphon turns the
+  system proxy off so traffic goes direct instead of failing, and turns it back
+  on when that tunnel returns. Like all automatic writes, this runs only with
+  passwordless sudo; otherwise the icon goes orange and waits for you.
+- **Occupied ports.** SOCKS ports are internal and are reassigned if taken.
+  HTTP ports are yours — exports refer to them — so a taken one is reported
+  (with what holds it) and moved only when you click the tunnel and agree.
+- **No stray ssh.** Children are stopped on Quit and on SIGTERM/SIGINT/SIGHUP;
+  anything a crash leaves behind is reaped at the next launch.
 - **Host keys are verified** against your `known_hosts`. `BatchMode` means a
   host needing a password, 2FA or a first-time key confirmation fails fast
-  with ssh's message in the tunnel's tooltip, instead of hanging on a prompt a
-  menu bar app cannot show. Sign in once from a terminal first.
+  with ssh's message in the tunnel's tooltip. Sign in once from a terminal.
 - **The bridge binds loopback only** and speaks plain HTTP proxy: `CONNECT`
   for HTTPS, absolute-URI requests rewritten to origin-form for HTTP.
 
-The behaviour is a native reimplementation of an earlier Python tool of mine,
-tunnelmux: same ports, same retry cadence, same proxy-off-when-all-down rule —
-minus its `StrictHostKeyChecking=no`.
+The ssh handling is a native reimplementation of an earlier Python tool of
+mine, tunnelmux — same flags and retry cadence, minus its load balancing and
+its `StrictHostKeyChecking=no`.
 
-`--probe` lists tunnels and the bridge. To exercise a real host once:
+`--probe` lists tunnels with their ports. To exercise a real host once:
 
 ```bash
 SIPHON_LIVE_SSH=some-host swift test --filter LiveSSHTests

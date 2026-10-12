@@ -22,6 +22,12 @@ enum Screenshot {
         // switch off these only touch defaults, never the network.
         controller.select(ProxyServer(host: "proxy-2.example.com", port: 3128))
         controller.select(ProxyServer(host: "proxy-1.example.com", port: 3128))
+        // Two example tunnels, disabled so no ssh is launched for a picture;
+        // they still show the row layout, state dot and port.
+        for target in ["build-host.example.net", "lab-gateway.example.org"] {
+            let t = controller.tunnels.add(target: target)
+            controller.tunnels.setEnabled(t.id, false)
+        }
 
         let delegate = AppDelegate(controller: controller)
         delegate.applicationDidFinishLaunching(Notification(name: Notification.Name(suite)))

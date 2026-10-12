@@ -16,7 +16,7 @@ final class LiveSSHTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let m = TunnelManager(defaults: defaults)
         defer { m.stopAll() }
-        m.httpPort = TestServers.freePort()      // tunnelmux may hold 7890
+        m.httpBasePort = TestServers.freePort()  // tunnelmux may hold 7890
         let config = m.add(target: host)
 
         let deadline = Date().addingTimeInterval(30)
@@ -25,11 +25,11 @@ final class LiveSSHTests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         XCTAssertEqual(m.state(of: config.id), .connected, "tunnel state: \(m.state(of: config.id))")
-        XCTAssertNotNil(m.proxyServer, "bridge error: \(m.bridgeError ?? "-")")
+        XCTAssertNotNil(m.proxyServer(for: config.id), "bridge error: \(m.bridgeError(for: config.id) ?? "-")")
 
         // Any HTTP status proves bytes went host -> tunnel -> origin and back.
         let (status, code) = TestServers.curl(["-o", "/dev/null", "-w", "%{http_code}",
-                                               "-x", "http://127.0.0.1:\(m.httpPort)",
+                                               "-x", "http://127.0.0.1:\(config.httpPort)",
                                                "https://example.com/"])
         print("live: curl exit \(status), HTTP \(code) via \(host)")
         XCTAssertNotEqual(code, "000", "no HTTP response came back through the tunnel")

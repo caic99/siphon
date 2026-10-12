@@ -36,11 +36,8 @@ enum Probe {
         let tunnels = controller.tunnels
         print("ssh tunnels:        " + (tunnels.configs.isEmpty ? "none" : ""))
         for c in tunnels.configs {
-            print("  \(c.target)  socks 127.0.0.1:\(c.socksPort)  \(c.enabled ? "enabled" : "disabled")")
-        }
-        if tunnels.enabledCount > 0 {
-            print("  bridge:           http://127.0.0.1:\(tunnels.httpPort)"
-                  + (tunnels.bridgeError.map { "  (not listening: \($0))" } ?? ""))
+            print("  \(c.target)  http://127.0.0.1:\(c.httpPort)  socks 127.0.0.1:\(c.socksPort)  "
+                  + (c.enabled ? "enabled" : "disabled"))
         }
 
         let runner = PrivilegeRunner()

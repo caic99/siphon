@@ -30,36 +30,41 @@ final class TunnelManagerTests: XCTestCase {
     func testAddingATunnelBringsUpTheBridgeAndTrafficFlows() {
         let m = TunnelManager(defaults: defaults, sshPath: fakeSSH)
         manager = m
-        m.httpPort = TestServers.freePort()
+        m.httpBasePort = TestServers.freePort()
         m.socksBasePort = TestServers.freePort()
-        XCTAssertNil(m.proxyServer, "no bridge before any tunnel exists")
-
         let config = m.add(target: "good-host")
         XCTAssertEqual(config.socksPort, m.socksBasePort)
+        XCTAssertEqual(config.httpPort, m.httpBasePort)
         XCTAssertTrue(wait { m.state(of: config.id) == .connected }, "\(m.state(of: config.id))")
-        XCTAssertTrue(wait { m.proxyServer != nil }, "bridge never listened: \(m.bridgeError ?? "-")")
-        XCTAssertEqual(m.proxyServer, ProxyServer(host: "127.0.0.1", port: Int(m.httpPort)))
-        XCTAssertTrue(m.isTunnelProxy(m.proxyServer))
+        XCTAssertTrue(wait { m.proxyServer(for: config.id) != nil },
+                      "bridge never listened: \(m.bridgeError(for: config.id) ?? "-")")
+        XCTAssertEqual(m.proxyServer(for: config.id), m.proxyAddress(for: config))
+        XCTAssertEqual(m.tunnel(forProxy: m.proxyAddress(for: config))?.id, config.id)
 
-        // End to end: curl -> bridge -> fake ssh's SOCKS -> origin.
+        // End to end: curl -> this tunnel's bridge -> its SOCKS -> origin.
         let originPort = TestServers.freePort()
         procs.append(TestServers.originServer(port: originPort))
         XCTAssertTrue(TestServers.waitForPort(originPort))
-        let (status, body) = TestServers.curl(["-x", "http://127.0.0.1:\(m.httpPort)", "http://127.0.0.1:\(originPort)/hello.txt"])
+        let (status, body) = TestServers.curl(["-x", "http://127.0.0.1:\(config.httpPort)", "http://127.0.0.1:\(originPort)/hello.txt"])
         XCTAssertEqual(status, 0); XCTAssertEqual(body, "hello through the tunnel\n")
 
-        // Second tunnel gets the next port; removing the last enabled one
-        // takes the bridge down.
+        // A second tunnel is a second, separate proxy on its own ports.
         let second = m.add(target: "good-host")
         XCTAssertGreaterThan(second.socksPort, config.socksPort)
-        m.remove(config.id); m.remove(second.id)
-        XCTAssertTrue(wait { m.proxyServer == nil })
+        XCTAssertGreaterThan(second.httpPort, config.httpPort)
+        XCTAssertTrue(wait { m.proxyServer(for: second.id) != nil })
+
+        // Removing one takes only its own bridge down.
+        m.remove(config.id)
+        XCTAssertTrue(wait { !TestServers.waitForPort(config.httpPort, seconds: 0.2) })
+        XCTAssertNotNil(m.proxyServer(for: second.id))
+        m.remove(second.id)
         XCTAssertEqual(m.configs.count, 0)
     }
 
     func testConfigurationPersistsAndRelaunchesOnStart() {
         let first = TunnelManager(defaults: defaults, sshPath: fakeSSH)
-        first.httpPort = TestServers.freePort()
+        first.httpBasePort = TestServers.freePort()
         first.socksBasePort = TestServers.freePort()
         let config = first.add(target: "good-host")
         first.setEnabled(config.id, false)
@@ -69,9 +74,8 @@ final class TunnelManagerTests: XCTestCase {
         let second = TunnelManager(defaults: defaults, sshPath: fakeSSH)
         manager = second
         XCTAssertEqual(second.configs, first.configs)
-        XCTAssertEqual(second.httpPort, first.httpPort)
         second.start()
-        XCTAssertNil(second.proxyServer, "disabled tunnels must not start")
+        XCTAssertNil(second.proxyServer(for: config.id), "disabled tunnels must not start")
         second.setEnabled(config.id, true)
         XCTAssertTrue(wait { second.state(of: config.id) == .connected })
     }
@@ -81,7 +85,7 @@ final class TunnelManagerTests: XCTestCase {
     func testAllocationSkipsPortsInUse() {
         let m = TunnelManager(defaults: defaults, sshPath: fakeSSH)
         manager = m
-        m.httpPort = TestServers.freePort()
+        m.httpBasePort = TestServers.freePort()
         let base = TestServers.freePort()
         m.socksBasePort = base
         procs.append(TestServers.python("socks5-server.py", [String(base)]))   // squatter
@@ -128,7 +132,7 @@ final class TunnelManagerTests: XCTestCase {
     /// stranger's listener as connected.
     func testPersistedSOCKSPortTakenAtRelaunchIsReassigned() {
         let first = TunnelManager(defaults: defaults, sshPath: fakeSSH)
-        first.httpPort = TestServers.freePort()
+        first.httpBasePort = TestServers.freePort()
         first.socksBasePort = TestServers.freePort()
         let config = first.add(target: "good-host")
         XCTAssertTrue(wait { first.state(of: config.id) == .connected })
@@ -148,40 +152,61 @@ final class TunnelManagerTests: XCTestCase {
         XCTAssertNotEqual(moved.socksPort, config.socksPort, "must not sit on the squatter's port")
     }
 
-    /// First use picks the first free HTTP port; a port taken later is reported
-    /// and can be moved, taking the bridge with it.
+    /// A tunnel's HTTP port taken by the time it relaunches is reported with
+    /// its owner and can be moved -- but is never moved silently, since
+    /// exports and the system proxy refer to it.
     func testHTTPPortCollisionIsReportedAndMovable() {
-        let busy = TestServers.freePort()
-        procs.append(TestServers.python("socks5-server.py", [String(busy)]))   // squatter on the HTTP port
-        XCTAssertTrue(TestServers.waitForPort(busy))
+        let first = TunnelManager(defaults: defaults, sshPath: fakeSSH)
+        first.httpBasePort = TestServers.freePort(); first.socksBasePort = TestServers.freePort()
+        let config = first.add(target: "good-host")
+        XCTAssertTrue(wait { first.proxyServer(for: config.id) != nil })
+        first.stopAll()
+        XCTAssertTrue(wait(3) { !TestServers.waitForPort(config.httpPort, seconds: 0.2) })
+
+        procs.append(TestServers.python("socks5-server.py", [String(config.httpPort)]))   // squatter
+        XCTAssertTrue(TestServers.waitForPort(config.httpPort))
 
         let m = TunnelManager(defaults: defaults, sshPath: fakeSSH)
         manager = m
-        m.socksBasePort = TestServers.freePort()
-        m.httpPort = busy                                   // as if kept from last time
-        m.add(target: "good-host")
-        XCTAssertTrue(wait { m.bridgeError != nil }, "a taken port must be reported")
-        XCTAssertNil(m.proxyServer)
-        XCTAssertTrue(m.bridgePortOwner?.lowercased().contains("python") == true, "\(m.bridgePortOwner ?? "-")")
+        m.socksBasePort = first.socksBasePort
+        m.start()
+        XCTAssertTrue(wait { m.bridgeError(for: config.id) != nil }, "a taken port must be reported")
+        XCTAssertNil(m.proxyServer(for: config.id))
+        XCTAssertEqual(m.configs.first?.httpPort, config.httpPort, "must not move on its own")
+        XCTAssertTrue(m.bridgePortOwner(for: config.id)?.lowercased().contains("python") == true)
 
-        let moved = m.moveBridgeToFreePort()
-        XCTAssertNotEqual(moved, busy)
-        XCTAssertEqual(m.httpPort, moved)
-        XCTAssertTrue(wait { m.proxyServer?.port == Int(moved) }, "bridge should listen on the new port")
+        let moved = m.moveBridgeToFreePort(config.id)
+        XCTAssertNotNil(moved); XCTAssertNotEqual(moved, config.httpPort)
+        XCTAssertTrue(wait { m.proxyServer(for: config.id)?.port == Int(moved!) }, "bridge should listen on the new port")
     }
 
-    func testAllGaveUpOnlyWhenEveryEnabledTunnelHas() {
+    /// Configs saved before per-tunnel HTTP ports existed get one on load.
+    func testOldConfigsWithoutHTTPPortAreMigrated() {
+        let legacy = """
+        [{"id":"11111111-1111-1111-1111-111111111111","target":"good-host","socksPort":\(TestServers.freePort()),"enabled":false}]
+        """
+        defaults.set(Data(legacy.utf8), forKey: "sshTunnels")
         let m = TunnelManager(defaults: defaults, sshPath: fakeSSH)
         manager = m
-        m.httpPort = TestServers.freePort()
+        m.httpBasePort = TestServers.freePort()
+        m.start()
+        XCTAssertEqual(m.configs.count, 1)
+        XCTAssertEqual(m.configs.first?.httpPort, m.httpBasePort)
+    }
+
+    func testGiveUpIsPerTunnel() {
+        let m = TunnelManager(defaults: defaults, sshPath: fakeSSH)
+        manager = m
+        m.httpBasePort = TestServers.freePort()
         m.socksBasePort = TestServers.freePort()
         let bad = m.add(target: "fail-host")
-        XCTAssertFalse(m.allGaveUp, "still retrying")
+        XCTAssertFalse(m.hasGivenUp(bad.id), "still retrying")
         // Real retry pacing is 8 s x 3; waiting that out here proves the
         // real cadence rather than a shortened one.
-        XCTAssertTrue(wait(40) { m.allGaveUp }, "\(m.state(of: bad.id))")
+        XCTAssertTrue(wait(40) { m.hasGivenUp(bad.id) }, "\(m.state(of: bad.id))")
+        // Another tunnel's fate is its own.
         let good = m.add(target: "good-host")
         XCTAssertTrue(wait { m.state(of: good.id) == .connected })
-        XCTAssertFalse(m.allGaveUp)
+        XCTAssertTrue(m.hasGivenUp(bad.id)); XCTAssertFalse(m.hasGivenUp(good.id))
     }
 }

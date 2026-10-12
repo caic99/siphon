@@ -154,17 +154,17 @@ public final class ProxyController {
     /// why no site-specific hostname appears in Siphon's source.
     private func refreshServers() {
         var servers = customServers
-        if tunnels.enabledCount > 0 {
-            let local = ProxyServer(host: "127.0.0.1", port: Int(tunnels.httpPort))
-            servers.removeAll { $0 == local }
-            servers.insert(local, at: 0)
-        }
+        // Tunnels are selectable from their own section; keep their addresses
+        // out of the plain list so nothing appears twice.
+        servers.removeAll { tunnels.isTunnelProxy($0) }
         if discoversServers {
             for discovered in NetworkState.discoverServers() where !servers.contains(discovered) {
                 servers.append(discovered)
             }
         }
-        if let server, !servers.contains(server) { servers.insert(server, at: 0) }
+        if let server, !servers.contains(server), !tunnels.isTunnelProxy(server) {
+            servers.insert(server, at: 0)
+        }
         knownServers = servers
         // First run: adopt what this service is already pointed at. Waiting for
         // a service beats guessing from an unrelated discovered proxy that
@@ -267,12 +267,14 @@ public final class ProxyController {
     /// the usual orange "awaiting you" state shows.
     private func tunnelsChanged() {
         refreshServers()
-        if tunnels.isTunnelProxy(server), tunnels.enabledCount > 0 {
-            if desiredOn, isProxyActive, tunnels.allGaveUp {
+        // The rule follows the one tunnel the system proxy points at; the
+        // others' fortunes are irrelevant to it.
+        if let config = tunnels.tunnel(forProxy: server), config.enabled {
+            if desiredOn, isProxyActive, tunnels.hasGivenUp(config.id) {
                 suspendedForTunnels = true
                 desiredOn = false
                 _ = reconcile(trigger: .automatic)
-            } else if suspendedForTunnels, tunnels.connectedCount > 0 {
+            } else if suspendedForTunnels, tunnels.state(of: config.id) == .connected {
                 suspendedForTunnels = false
                 desiredOn = true
                 _ = reconcile(trigger: .automatic)
@@ -286,11 +288,12 @@ public final class ProxyController {
     /// True while the switch is off only because the tunnels are down.
     public var isSuspendedForTunnels: Bool { suspendedForTunnels }
 
-    /// Move the bridge off an occupied port. If the system proxy was pointed
-    /// at the old address, point it at the new one (applied at once when on).
-    public func moveTunnelProxyToFreePort() {
-        let wasSelected = tunnels.isTunnelProxy(server)
-        let port = tunnels.moveBridgeToFreePort()
+    /// Move a tunnel's bridge off an occupied port. If the system proxy was
+    /// pointed at the old address, point it at the new one (applied at once
+    /// when on).
+    public func moveTunnelProxyToFreePort(_ id: UUID) {
+        let wasSelected = tunnels.tunnel(forProxy: server)?.id == id
+        guard let port = tunnels.moveBridgeToFreePort(id) else { return }
         if wasSelected {
             select(ProxyServer(host: "127.0.0.1", port: Int(port)))
         } else {

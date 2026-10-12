@@ -4,35 +4,54 @@ public struct TunnelConfig: Codable, Equatable, Identifiable, Sendable {
     public let id: UUID
     public var target: String
     public var socksPort: UInt16
+    /// This tunnel's own HTTP proxy port. Each tunnel is a separate proxy the
+    /// system can be pointed at; nothing is balanced across them.
+    public var httpPort: UInt16
     public var enabled: Bool
+
+    public init(id: UUID, target: String, socksPort: UInt16, httpPort: UInt16, enabled: Bool) {
+        self.id = id; self.target = target; self.socksPort = socksPort
+        self.httpPort = httpPort; self.enabled = enabled
+    }
+
+    // Configs written before per-tunnel HTTP ports have none; 0 means "assign".
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        target = try c.decode(String.self, forKey: .target)
+        socksPort = try c.decode(UInt16.self, forKey: .socksPort)
+        httpPort = try c.decodeIfPresent(UInt16.self, forKey: .httpPort) ?? 0
+        enabled = try c.decode(Bool.self, forKey: .enabled)
+    }
 }
 
-/// The set of SSH tunnels and the one HTTP bridge in front of them.
+/// The set of SSH tunnels, each with its own `ssh -N -D` process and its own
+/// loopback HTTP proxy in front of it.
 ///
-/// Mirrors tunnelmux's shape: every tunnel gets its own SOCKS port (18081
-/// upward), and a single HTTP proxy on 7890 round-robins each request across
-/// whichever tunnels are connected right now. Configuration persists in
-/// UserDefaults; processes do not — tunnels are relaunched at startup.
+/// One proxy per tunnel, deliberately: the system proxy points at exactly one
+/// host at a time, so where traffic exits is never a question, and a tunnel
+/// that is down takes nothing with it except its own address. Several tunnels
+/// can be up at once; switching between them is picking a different server.
 public final class TunnelManager {
-    public static let defaultHTTPPort: UInt16 = 7890
+    public static let defaultHTTPBasePort: UInt16 = 7890
     public static let defaultSOCKSBasePort: UInt16 = 18081
-    /// Where SOCKS port allocation starts. Tests point this at a free range.
+    /// Where allocation starts. Tests point these at free ranges.
+    public var httpBasePort: UInt16 = TunnelManager.defaultHTTPBasePort
     public var socksBasePort: UInt16 = TunnelManager.defaultSOCKSBasePort
 
-    private enum Key {
-        static let configs = "sshTunnels"
-        static let httpPort = "tunnelHTTPPort"
+    private enum Key { static let configs = "sshTunnels" }
+
+    private struct Live {
+        let tunnel: SSHTunnel
+        let bridge: HTTPProxyBridge
     }
 
     private let defaults: UserDefaults
     private let sshPath: String
     private let registry: ChildRegistry
-    private var tunnels: [UUID: SSHTunnel] = [:]
-    private var bridge: HTTPProxyBridge?
-    private var roundRobin = 0
-    private let lock = NSLock()
+    private var live: [UUID: Live] = [:]
 
-    /// Fired on the main queue whenever a tunnel's state or the bridge changes.
+    /// Fired on the main queue whenever a tunnel's state or a bridge changes.
     public var onChange: (() -> Void)?
 
     public init(defaults: UserDefaults, sshPath: String = "/usr/bin/ssh") {
@@ -52,97 +71,81 @@ public final class TunnelManager {
         set { defaults.set(try? JSONEncoder().encode(newValue), forKey: Key.configs) }
     }
 
-    /// The bridge's port. Chosen on first use as the first free port from 7890
-    /// (tunnelmux may already hold 7890 itself) and then kept, because exports
-    /// and the system proxy refer to it by number.
-    public var httpPort: UInt16 {
-        get {
-            let stored = defaults.integer(forKey: Key.httpPort)
-            return stored > 0 ? UInt16(stored) : Self.firstFreePort(from: Self.defaultHTTPPort)
-        }
-        set {
-            defaults.set(Int(newValue), forKey: Key.httpPort)
-            if bridge != nil { stopBridge(); startBridgeIfNeeded() }
-        }
+    /// The address a tunnel's proxy has, whether or not it is listening.
+    public func proxyAddress(for config: TunnelConfig) -> ProxyServer {
+        ProxyServer(host: "127.0.0.1", port: Int(config.httpPort))
     }
 
-    /// When the kept port has since been taken, the user chooses to move: this
-    /// picks the next free port, persists it and restarts the bridge. Returns
-    /// the new port.
+    /// The address clients can use right now; nil until its bridge listens.
+    public func proxyServer(for id: UUID) -> ProxyServer? {
+        guard let config = configs.first(where: { $0.id == id }),
+              live[id]?.bridge.isListening == true else { return nil }
+        return proxyAddress(for: config)
+    }
+
+    /// The tunnel a server address belongs to, if any.
+    public func tunnel(forProxy server: ProxyServer?) -> TunnelConfig? {
+        guard let server, server.host == "127.0.0.1" else { return nil }
+        return configs.first { Int($0.httpPort) == server.port }
+    }
+
+    public func isTunnelProxy(_ server: ProxyServer?) -> Bool { tunnel(forProxy: server) != nil }
+
+    public func bridgeError(for id: UUID) -> String? { live[id]?.bridge.lastError }
+
+    /// What is sitting on a tunnel's HTTP port, for the error message.
+    public func bridgePortOwner(for id: UUID) -> String? {
+        guard let config = configs.first(where: { $0.id == id }) else { return nil }
+        return Self.listenerDescription(port: config.httpPort)
+    }
+
+    /// The kept port has since been taken: pick the next free one, persist it
+    /// and restart that tunnel's bridge. Returns the new port.
     @discardableResult
-    public func moveBridgeToFreePort() -> UInt16 {
-        let next = Self.firstFreePort(from: httpPort &+ 1)
-        httpPort = next
-        return next
-    }
-
-    /// What is sitting on the bridge's port, for the error message.
-    public var bridgePortOwner: String? {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        p.arguments = ["-nP", "-iTCP:\(httpPort)", "-sTCP:LISTEN", "-Fcp"]
-        let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
-        do { try p.run() } catch { return nil }
-        let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        p.waitUntilExit()
-        var pid = "", cmd = ""
-        for line in text.split(separator: "\n") {
-            if line.hasPrefix("p") { pid = String(line.dropFirst()) }
-            if line.hasPrefix("c") { cmd = String(line.dropFirst()) }
+    public func moveBridgeToFreePort(_ id: UUID) -> UInt16? {
+        guard var list = Optional(configs), let i = list.firstIndex(where: { $0.id == id }) else { return nil }
+        let used = Set(list.map(\.httpPort))
+        var port = list[i].httpPort &+ 1
+        while used.contains(port) || !Self.portIsFree(port) { port += 1 }
+        list[i].httpPort = port
+        configs = list
+        if let l = live[id] {
+            l.bridge.stop()
+            live[id] = Live(tunnel: l.tunnel, bridge: makeBridge(for: list[i], tunnel: l.tunnel))
         }
-        return cmd.isEmpty ? nil : "\(cmd) (pid \(pid))"
-    }
-
-    public static func firstFreePort(from start: UInt16) -> UInt16 {
-        var port = start
-        while !portIsFree(port) && port < UInt16.max { port += 1 }
+        notify()
         return port
     }
-
-    /// The address clients use. Nil until the bridge is actually listening.
-    public var proxyServer: ProxyServer? {
-        bridge?.isListening == true ? ProxyServer(host: "127.0.0.1", port: Int(httpPort)) : nil
-    }
-
-    /// The address regardless of state — for recognising it in a server list.
-    public func isTunnelProxy(_ server: ProxyServer?) -> Bool {
-        server == ProxyServer(host: "127.0.0.1", port: Int(httpPort))
-    }
-
-    public var bridgeError: String? { bridge?.lastError }
 
     // MARK: - Lifecycle
 
     /// Launch whatever was enabled last time. Call once at app start.
     public func start() {
-        // Children of a previous instance that died without cleaning up.
-        registry.reapLeftovers()
+        registry.reapLeftovers()   // children of an instance that died uncleanly
+        assignMissingHTTPPorts()
         for config in configs where config.enabled { launch(config) }
-        startBridgeIfNeeded()
     }
 
     public func stopAll() {
-        tunnels.values.forEach { $0.stop() }
-        tunnels.removeAll()
-        stopBridge()
+        for l in live.values { l.tunnel.stop(); l.bridge.stop() }
+        live.removeAll()
     }
 
     @discardableResult
     public func add(target: String) -> TunnelConfig {
-        let trimmed = target.trimmingCharacters(in: .whitespaces)
-        let config = TunnelConfig(id: UUID(), target: trimmed, socksPort: nextSOCKSPort(), enabled: true)
+        let config = TunnelConfig(id: UUID(), target: target.trimmingCharacters(in: .whitespaces),
+                                  socksPort: nextPort(from: socksBasePort, avoiding: configs.map(\.socksPort)),
+                                  httpPort: nextPort(from: httpBasePort, avoiding: configs.map(\.httpPort)),
+                                  enabled: true)
         configs.append(config)
         launch(config)
-        startBridgeIfNeeded()
         notify()
         return config
     }
 
     public func remove(_ id: UUID) {
-        tunnels[id]?.stop()
-        tunnels[id] = nil
+        stop(id)
         configs.removeAll { $0.id == id }
-        if enabledCount == 0 { stopBridge() }
         notify()
     }
 
@@ -151,67 +154,89 @@ public final class TunnelManager {
         var list = configs
         list[index].enabled = enabled
         configs = list
-        if enabled {
-            launch(list[index]); startBridgeIfNeeded()
-        } else {
-            tunnels[id]?.stop(); tunnels[id] = nil
-            if enabledCount == 0 { stopBridge() }
-        }
+        if enabled { launch(list[index]) } else { stop(id) }
         notify()
     }
 
-    public func retry(_ id: UUID) { tunnels[id]?.retry() }
+    public func retry(_ id: UUID) { live[id]?.tunnel.retry() }
 
     /// The default route moved: live sessions are stale, give-ups deserve a
     /// fresh start.
     public func networkChanged() {
-        for (id, tunnel) in tunnels {
-            if case .gaveUp = tunnel.state { tunnel.retry() } else { tunnel.restart() }
-            _ = id
+        for l in live.values {
+            if case .gaveUp = l.tunnel.state { l.tunnel.retry() } else { l.tunnel.restart() }
         }
     }
 
     // MARK: - State
 
-    public func state(of id: UUID) -> SSHTunnel.State { tunnels[id]?.state ?? .idle }
-    public func connectedSince(_ id: UUID) -> Date? { tunnels[id]?.connectedSince }
-    public var enabledCount: Int { configs.filter(\.enabled).count }
-    public var connectedCount: Int { tunnels.values.filter { $0.state == .connected }.count }
-
-    /// Nothing is connected and nothing is still trying — tunnelmux's trigger
-    /// for taking the system proxy down.
-    public var allGaveUp: Bool {
-        guard enabledCount > 0, connectedCount == 0 else { return false }
-        return tunnels.values.allSatisfy { if case .gaveUp = $0.state { return true }; return false }
+    public func state(of id: UUID) -> SSHTunnel.State { live[id]?.tunnel.state ?? .idle }
+    public func connectedSince(_ id: UUID) -> Date? { live[id]?.tunnel.connectedSince }
+    public func hasGivenUp(_ id: UUID) -> Bool {
+        if case .gaveUp = state(of: id) { return true }
+        return false
     }
+    public var enabledCount: Int { configs.filter(\.enabled).count }
+    public var connectedCount: Int { live.values.filter { $0.tunnel.state == .connected }.count }
 
     // MARK: - Internals
 
     private func launch(_ config: TunnelConfig) {
-        tunnels[config.id]?.stop()
+        stop(config.id)
         var config = config
-        // The port kept from last time may have been taken since -- by
-        // tunnelmux, another instance, anything. ssh would fail to bind, or
-        // worse, the readiness probe would see the stranger's listener and
-        // call it connected. SOCKS ports are internal, so just move.
+        // Ports kept from last time may have been taken since -- by tunnelmux,
+        // another instance, anything. For SOCKS, ssh would fail to bind, or
+        // worse the readiness probe would see the stranger's listener and call
+        // it connected; those ports are internal, so just move. The HTTP port
+        // is user-facing (exports, system proxy) and is only reported.
         if !Self.portIsFree(config.socksPort) {
-            config.socksPort = nextSOCKSPort()
-            var list = configs
-            if let i = list.firstIndex(where: { $0.id == config.id }) { list[i] = config; configs = list }
+            config.socksPort = nextPort(from: socksBasePort, avoiding: configs.map(\.socksPort))
+            update(config)
         }
         let tunnel = SSHTunnel(target: config.target, socksPort: config.socksPort, sshPath: sshPath,
                                registry: registry)
         tunnel.onChange = { [weak self] in self?.notify() }
-        tunnels[config.id] = tunnel
+        let bridge = makeBridge(for: config, tunnel: tunnel)
+        live[config.id] = Live(tunnel: tunnel, bridge: bridge)
         tunnel.start()
     }
 
-    /// The first port from the base that no configured tunnel uses and that
-    /// nothing on this Mac is listening on — tunnelmux and a previous Siphon
-    /// use the same range, so "not ours" is not the same as "free".
-    private func nextSOCKSPort() -> UInt16 {
-        let used = Set(configs.map(\.socksPort))
-        var port = socksBasePort
+    private func stop(_ id: UUID) {
+        guard let l = live.removeValue(forKey: id) else { return }
+        l.tunnel.stop()
+        l.bridge.stop()
+    }
+
+    /// A bridge serves exactly its own tunnel: 503 while that tunnel is down,
+    /// never a quiet detour through another one.
+    private func makeBridge(for config: TunnelConfig, tunnel: SSHTunnel) -> HTTPProxyBridge {
+        let bridge = HTTPProxyBridge(port: config.httpPort) { [weak tunnel] in
+            guard let tunnel, tunnel.state == .connected else { return nil }
+            return tunnel.socksPort
+        }
+        bridge.onStateChange = { [weak self] in self?.notify() }
+        bridge.start()
+        return bridge
+    }
+
+    private func update(_ config: TunnelConfig) {
+        var list = configs
+        if let i = list.firstIndex(where: { $0.id == config.id }) { list[i] = config; configs = list }
+    }
+
+    private func assignMissingHTTPPorts() {
+        var list = configs
+        var changed = false
+        for i in list.indices where list[i].httpPort == 0 {
+            list[i].httpPort = nextPort(from: httpBasePort, avoiding: list.map(\.httpPort))
+            changed = true
+        }
+        if changed { configs = list }
+    }
+
+    private func nextPort(from base: UInt16, avoiding taken: [UInt16]) -> UInt16 {
+        let used = Set(taken)
+        var port = base
         while used.contains(port) || !Self.portIsFree(port) { port += 1 }
         return port
     }
@@ -233,32 +258,20 @@ public final class TunnelManager {
         }
     }
 
-    private func startBridgeIfNeeded() {
-        guard bridge == nil, enabledCount > 0 else { return }
-        if defaults.integer(forKey: Key.httpPort) == 0 {
-            defaults.set(Int(httpPort), forKey: Key.httpPort)   // pin the first-use choice
+    static func listenerDescription(port: UInt16) -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        p.arguments = ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-Fcp"]
+        let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return nil }
+        let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        p.waitUntilExit()
+        var pid = "", cmd = ""
+        for line in text.split(separator: "\n") {
+            if line.hasPrefix("p") { pid = String(line.dropFirst()) }
+            if line.hasPrefix("c") { cmd = String(line.dropFirst()) }
         }
-        let b = HTTPProxyBridge(port: httpPort) { [weak self] in self?.pickUpstream() }
-        b.onStateChange = { [weak self] in self?.notify() }
-        bridge = b
-        b.start()
-    }
-
-    private func stopBridge() {
-        bridge?.stop()
-        bridge = nil
-        notify()
-    }
-
-    /// Round-robin over connected tunnels, in configuration order. Called from
-    /// the bridge's queue.
-    private func pickUpstream() -> UInt16? {
-        lock.lock(); defer { lock.unlock() }
-        let ready = configs.compactMap { tunnels[$0.id] }.filter { $0.state == .connected }
-        guard !ready.isEmpty else { return nil }
-        let chosen = ready[roundRobin % ready.count]
-        roundRobin &+= 1
-        return chosen.socksPort
+        return cmd.isEmpty ? nil : "\(cmd) (pid \(pid))"
     }
 
     private func notify() { DispatchQueue.main.async { [onChange] in onChange?() } }
