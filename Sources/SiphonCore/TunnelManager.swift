@@ -15,7 +15,9 @@ public struct TunnelConfig: Codable, Equatable, Identifiable, Sendable {
 /// UserDefaults; processes do not — tunnels are relaunched at startup.
 public final class TunnelManager {
     public static let defaultHTTPPort: UInt16 = 7890
-    public static let socksBasePort: UInt16 = 18081
+    public static let defaultSOCKSBasePort: UInt16 = 18081
+    /// Where SOCKS port allocation starts. Tests point this at a free range.
+    public var socksBasePort: UInt16 = TunnelManager.defaultSOCKSBasePort
 
     private enum Key {
         static let configs = "sshTunnels"
@@ -153,11 +155,31 @@ public final class TunnelManager {
         tunnel.start()
     }
 
+    /// The first port from the base that no configured tunnel uses and that
+    /// nothing on this Mac is listening on — tunnelmux and a previous Siphon
+    /// use the same range, so "not ours" is not the same as "free".
     private func nextSOCKSPort() -> UInt16 {
         let used = Set(configs.map(\.socksPort))
-        var port = Self.socksBasePort
-        while used.contains(port) { port += 1 }
+        var port = socksBasePort
+        while used.contains(port) || !Self.portIsFree(port) { port += 1 }
         return port
+    }
+
+    static func portIsFree(_ port: UInt16) -> Bool {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return true }
+        defer { close(fd) }
+        var on: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int32>.size))
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        return withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
+            }
+        }
     }
 
     private func startBridgeIfNeeded() {

@@ -36,6 +36,9 @@ public final class SSHTunnel {
     private let sshPath: String
     private let queue = DispatchQueue(label: "siphon.ssh")
     private var process: Process?
+    /// Held open for the supervisor's stdin; closing it — which the kernel
+    /// does for us if this process dies any way at all — makes ssh exit.
+    private var leash: Pipe?
     private var stderr = Data()
     private var retries = 0
     private var wanted = false
@@ -63,6 +66,28 @@ public final class SSHTunnel {
          target]
     }
 
+    /// ssh runs under this shell script rather than directly. A menu bar app
+    /// gets no applicationWillTerminate on SIGTERM or a crash, so a plain child
+    /// would be orphaned with its tunnel still up. The script keeps ssh alive
+    /// only as long as its stdin stays open: the app holds the write end and
+    /// never writes; when the app dies the pipe closes, `read` sees EOF and ssh
+    /// is killed. ssh's own exit status is passed through so a tunnel that
+    /// dies on its own is still reported as such.
+    ///
+    /// The leash is kept on descriptor 3: POSIX gives a backgrounded `( … ) &`
+    /// stdin from /dev/null, so a watcher reading fd 0 would see EOF at once
+    /// and kill ssh on the spot. ssh itself gets /dev/null — it must not read
+    /// the leash either.
+    public static let supervisorScript = [
+        "exec 3<&0",
+        "\"$@\" 0</dev/null & pid=$!",
+        "( while IFS= read -r _ 0<&3; do :; done; kill \"$pid\" 2>/dev/null ) & watcher=$!",
+        "trap 'kill \"$pid\" \"$watcher\" 2>/dev/null' TERM INT HUP",
+        "wait \"$pid\"; status=$?",
+        "kill \"$watcher\" 2>/dev/null",
+        "exit $status",
+    ].joined(separator: "\n")
+
     public func start() { queue.async { [self] in wanted = true; retries = 0; launch() } }
     public func stop() { queue.async { [self] in wanted = false; pending?.cancel(); terminate(); state = .idle } }
     public func retry() { start() }
@@ -78,9 +103,10 @@ public final class SSHTunnel {
         stderr = Data()
 
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: sshPath)
-        p.arguments = arguments
-        p.standardInput = FileHandle.nullDevice
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", Self.supervisorScript, "siphon-ssh", sshPath] + arguments
+        let leash = Pipe()
+        p.standardInput = leash
         p.standardOutput = FileHandle.nullDevice
         let errPipe = Pipe()
         p.standardError = errPipe
@@ -93,10 +119,15 @@ public final class SSHTunnel {
             errPipe.fileHandleForReading.readabilityHandler = nil
             self?.queue.async { self?.exited(proc) }
         }
+        // Identity is set before run(): a child that exits at once fires its
+        // termination handler before run() returns, and the handler must still
+        // recognise it as the current process.
+        process = p
+        self.leash = leash
         do { try p.run() } catch {
+            process = nil; self.leash = nil
             failed("could not run ssh: \(error.localizedDescription)"); return
         }
-        process = p
         probeUntilReady(deadline: Date().addingTimeInterval(connectTimeout))
     }
 
@@ -154,6 +185,9 @@ public final class SSHTunnel {
         pending?.cancel()
         guard let p = process else { return }
         process = nil
+        // Closing the leash is enough on its own; the signal just makes it quick.
+        try? leash?.fileHandleForWriting.close()
+        leash = nil
         if p.isRunning { p.terminate() }
     }
 
