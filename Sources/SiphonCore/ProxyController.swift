@@ -210,6 +210,19 @@ public final class ProxyController {
         finish(reconcile(trigger: .userClick), revertingTo: desiredOn)
     }
 
+    /// Servers the user added, as opposed to discovered on this Mac — the
+    /// only ones that can be removed.
+    public var addedServers: [ProxyServer] { customServers }
+
+    /// Drop a server the user added. If it was selected, selection falls back
+    /// to whatever the current service points at, as on first run.
+    public func forgetServer(_ old: ProxyServer) {
+        customServers.removeAll { $0 == old }
+        if server == old { server = nil }
+        refreshServers()
+        onChange?()
+    }
+
     public func select(_ newServer: ProxyServer) {
         server = newServer
         // Remember every server that gets used, not just typed-in ones.

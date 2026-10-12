@@ -19,10 +19,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var headerItem: NSMenuItem!
     private var toggleItem: NSMenuItem!
     private var obstructionItem: NSMenuItem!
+    private var serverHeaderItem: NSMenuItem!
     private var customServerItem: NSMenuItem!
     private var copyExportsItem: NSMenuItem!
     private var addTunnelItem: NSMenuItem!
-    private var removeTunnelItem: NSMenuItem!
+    private var removeItem: NSMenuItem!
     private var tunnelItems: [NSMenuItem] = []
     private var reapplyItem: NSMenuItem!
     private var serverItems: [NSMenuItem] = []
@@ -106,25 +107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(toggleItem)
         menu.addItem(.separator())
 
-        menu.addItem(Self.sectionHeader("Proxy Server"))
-        customServerItem = NSMenuItem(title: "Custom…", action: #selector(addCustomServer),
-                                      keyEquivalent: "")
-        customServerItem.target = self
-        menu.addItem(customServerItem)
-
-        // SSH tunnels live in the same list: a tunnel is just a proxy that
-        // Siphon also keeps alive. Its rows go before Custom…; these two
-        // follow it.
-        addTunnelItem = NSMenuItem(title: "Add SSH Tunnel…", action: #selector(addTunnel),
-                                   keyEquivalent: "")
-        addTunnelItem.target = self
-        addTunnelItem.toolTip = "ssh -N -D to a host from your ssh config (keys or agent; no prompts). "
-            + "Each tunnel is its own local HTTP proxy: click a tunnel to point the system at it, "
-            + "hold ⌥ to connect or disconnect it."
-        menu.addItem(addTunnelItem)
-        removeTunnelItem = NSMenuItem(title: "Remove Tunnel", action: nil, keyEquivalent: "")
-        removeTunnelItem.submenu = NSMenu()
-        menu.addItem(removeTunnelItem)
+        serverHeaderItem = Self.sectionHeader("Proxy Server")
+        menu.addItem(serverHeaderItem)
+        // Server and tunnel rows are inserted after the header on refresh.
         menu.addItem(.separator())
 
         copyExportsItem = NSMenuItem(title: "Copy Shell Exports",
@@ -143,9 +128,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                     accessibilityDescription: "Re-apply")
         reapplyItem.toolTip = "Re-apply the proxy to whichever service owns the default route "
             + "when it moves — a cable going in, Wi-Fi taking over, a tunnel coming up. "
-            + "Runs automatically only when "
-            + "passwordless sudo is available, so a password dialog never appears unprompted."
+            + "Runs automatically only when passwordless sudo is available, so a password "
+            + "dialog never appears unprompted."
         menu.addItem(reapplyItem)
+        menu.addItem(.separator())
+
+        // Editing the list lives in its own segment: the list above stays
+        // pure content.
+        customServerItem = NSMenuItem(title: "Add Proxy Server…", action: #selector(addCustomServer),
+                                      keyEquivalent: "")
+        customServerItem.target = self
+        menu.addItem(customServerItem)
+        addTunnelItem = NSMenuItem(title: "Add SSH Tunnel…", action: #selector(addTunnel),
+                                   keyEquivalent: "")
+        addTunnelItem.target = self
+        addTunnelItem.toolTip = "ssh -N -D to a host from your ssh config (keys or agent; no prompts). "
+            + "Each tunnel is its own local HTTP proxy: click a tunnel to point the system at it, "
+            + "hold ⌥ to connect or disconnect it."
+        menu.addItem(addTunnelItem)
+        // Added servers and tunnels; discovered servers come from the system
+        // and are not ours to remove.
+        removeItem = NSMenuItem(title: "Remove", action: nil, keyEquivalent: "")
+        removeItem.submenu = NSMenu()
+        menu.addItem(removeItem)
         menu.addItem(.separator())
 
         let quit = NSMenuItem(title: "Quit Siphon",
@@ -324,6 +329,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.tunnels.retry(id)
     }
 
+    @objc private func forgetServer(_ sender: NSMenuItem) {
+        guard let server = sender.representedObject as? ProxyServer else { return }
+        controller.forgetServer(server)
+    }
+
     @objc private func removeTunnel(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID else { return }
         controller.tunnels.remove(id)
@@ -358,7 +368,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func addCustomServer() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Proxy Server"
+        alert.messageText = "Add Proxy Server"
         alert.informativeText = "Host and port, for example proxy.example.com:"
             + "\(ProxyServer.defaultPort). The port may be omitted."
         alert.addButton(withTitle: "Use")
@@ -502,8 +512,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let tunnels = controller.tunnels
         for item in tunnelItems { menu.removeItem(item) }
         tunnelItems = []
-        // Tunnel rows sit at the end of the server list, just above Custom….
-        guard let insertionIndex = menu.items.firstIndex(of: customServerItem) else { return }
+        // Tunnel rows follow the server rows.
+        guard let header = menu.items.firstIndex(of: serverHeaderItem) else { return }
+        let insertionIndex = header + 1 + serverItems.count
         let selectedID = tunnels.tunnel(forProxy: controller.server)?.id
         var offset = 0
         for config in tunnels.configs {
@@ -552,15 +563,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         // Removal lives in one submenu so a stray click can't do it.
-        let removeMenu = removeTunnelItem.submenu!
+        let removeMenu = removeItem.submenu!
         removeMenu.removeAllItems()
+        let added = controller.addedServers
+        let labels = ServerLabels.labels(for: added)
+        for (i, server) in added.enumerated() {
+            let item = NSMenuItem(title: labels[i], action: #selector(forgetServer(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = server
+            removeMenu.addItem(item)
+        }
+        if !added.isEmpty, !tunnels.configs.isEmpty { removeMenu.addItem(.separator()) }
         for config in tunnels.configs {
-            let item = NSMenuItem(title: config.target, action: #selector(removeTunnel(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: "\(config.target)  (tunnel)", action: #selector(removeTunnel(_:)),
+                                  keyEquivalent: "")
             item.target = self
             item.representedObject = config.id
             removeMenu.addItem(item)
         }
-        removeTunnelItem.isHidden = tunnels.configs.isEmpty
+        removeItem.isHidden = added.isEmpty && tunnels.configs.isEmpty
     }
 
     /// Target in the normal weight, its proxy port after it in the secondary
@@ -609,7 +630,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for item in serverItems { menu.removeItem(item) }
         serverItems = []
 
-        guard let insertionIndex = menu.items.firstIndex(of: customServerItem) else { return }
+        guard let header = menu.items.firstIndex(of: serverHeaderItem) else { return }
+        let insertionIndex = header + 1
         let servers = controller.knownServers
         let labels = ServerLabels.labels(for: servers)
         for (offset, server) in servers.enumerated() {

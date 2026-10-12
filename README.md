@@ -44,7 +44,7 @@ changed underneath it.
 - **SSH tunnels built in**: `ssh -N -D` to hosts from your config, kept alive,
   each behind its own local HTTP proxy you can switch the system to.
 - **No hard-coded servers**: the menu lists the proxies already configured on
-  this Mac, plus every one you have used or added under **Custom…** — so
+  this Mac, plus every one you have used or added under **Add Proxy Server…** — so
   switching away from a server does not lose it.
 
 ## Build & run
@@ -82,7 +82,9 @@ In the menu, a tunnel row *is* that proxy:
   was off). ✓ marks the one in use; the dot shows state; its port is shown
   after the name — that's the number to give other tools.
 - **Hold ⌥** and the rows become *Connect …* / *Disconnect …*.
-- **Remove Tunnel ▸** lives in its own submenu, where a stray click can't reach.
+- Adding and removing live in their own segment below: **Add Proxy Server…**,
+  **Add SSH Tunnel…** and **Remove ▸** (added servers and tunnels; discovered
+  servers come from the system and stay).
 - **Copy Shell Exports** and `--exports` follow whichever proxy is selected,
   tunnel or not.
 
