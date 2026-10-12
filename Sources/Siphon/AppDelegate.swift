@@ -551,8 +551,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if !added.isEmpty, !tunnels.configs.isEmpty { removeMenu.addItem(.separator()) }
         for config in tunnels.configs {
-            let item = NSMenuItem(title: "\(config.target)  (tunnel)", action: #selector(removeTunnel(_:)),
-                                  keyEquivalent: "")
+            let item = NSMenuItem(title: config.target, action: #selector(removeTunnel(_:)), keyEquivalent: "")
+            item.attributedTitle = Self.tunnelTitle(config.target, port: config.httpPort)
             item.target = self
             item.representedObject = config.id
             removeMenu.addItem(item)
