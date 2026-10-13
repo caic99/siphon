@@ -515,7 +515,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case .reconnecting(let reason, let attempt):
                 (color, detail) = (.systemOrange, "Reconnecting (\(attempt)/3): \(reason)")
             case .gaveUp(let reason):
-                (color, detail) = (.systemRed, "Gave up: \(reason) — click to retry")
+                var text = "Gave up: \(reason) — click to retry"
+                if reason.contains("SOCKS port"), let owner = tunnels.socksPortOwner(for: config.id) {
+                    text += " (held by \(owner))"
+                }
+                (color, detail) = (.systemRed, text)
             case .dormant:
                 (color, detail) = (.systemGray, "Ready — connects on first use, sleeps after 10 min idle")
             case .idle:

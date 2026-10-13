@@ -99,6 +99,13 @@ public final class TunnelManager {
         return Self.listenerDescription(port: config.httpPort)
     }
 
+    /// What is sitting on a tunnel's SOCKS port -- only meaningful when the
+    /// tunnel is not the one listening there.
+    public func socksPortOwner(for id: UUID) -> String? {
+        guard let config = configs.first(where: { $0.id == id }) else { return nil }
+        return Self.listenerDescription(port: config.socksPort)
+    }
+
     /// The kept port has since been taken: pick the next free one, persist it
     /// and restart that tunnel's bridge. Returns the new port.
     @discardableResult
@@ -184,16 +191,13 @@ public final class TunnelManager {
 
     private func launch(_ config: TunnelConfig) {
         stop(config.id)
-        var config = config
-        // Ports kept from last time may have been taken since -- by tunnelmux,
-        // another instance, anything. For SOCKS, ssh would fail to bind, or
-        // worse the readiness probe would see the stranger's listener and call
-        // it connected; those ports are internal, so just move. The HTTP port
-        // is user-facing (exports, system proxy) and is only reported.
-        if !Self.portIsFree(config.socksPort) {
-            config.socksPort = nextPort(from: socksBasePort, avoiding: configs.map(\.socksPort))
-            update(config)
-        }
+        // Both ports are the tunnel's for the life of its config. The SOCKS
+        // port is as user-facing as the HTTP one -- it is written into the
+        // system proxy and exported as ALL_PROXY -- and an on-demand tunnel
+        // frees it every time it sleeps, so a silent reassignment would leave
+        // shells and the system setting pointing at a dead port with no sign
+        // anything changed. If a stranger holds it at wake time, ssh fails to
+        // bind and the tunnel reports that, exactly as the HTTP side does.
         let tunnel = SSHTunnel(target: config.target, socksPort: config.socksPort, sshPath: sshPath,
                                registry: registry)
         tunnel.idleTimeout = idleTimeout

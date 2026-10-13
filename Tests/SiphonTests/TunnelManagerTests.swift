@@ -131,21 +131,19 @@ final class TunnelManagerTests: XCTestCase {
         XCTAssertTrue(bystander.isRunning, "a process whose command line doesn't match must be left alone")
     }
 
-    /// The SOCKS port kept from last time has been taken in the meantime: the
-    /// tunnel must move rather than fail to bind -- or, worse, report the
-    /// stranger's listener as connected.
-    func testPersistedSOCKSPortTakenAtRelaunchIsReassigned() {
+    /// A tunnel's SOCKS port is its own for the life of the config. It is in
+    /// the system proxy and in exported shells, so it must never move under
+    /// the user; a stranger on it is reported, not routed around.
+    func testSOCKSPortIsNeverReassignedAndAStrangerIsReported() {
         let first = TunnelManager(defaults: defaults, sshPath: fakeSSH)
-        first.httpBasePort = TestServers.freePort()
-        first.socksBasePort = TestServers.freePort()
+        first.httpBasePort = TestServers.freePort(); first.socksBasePort = TestServers.freePort()
         let config = first.add(target: "good-host")
         first.connect(config.id)
         XCTAssertTrue(wait { first.state(of: config.id) == .connected })
         first.stopAll()
         XCTAssertTrue(wait(3) { !TestServers.waitForPort(config.socksPort, seconds: 0.2) })
 
-        // Something else takes the port before the next launch.
-        procs.append(TestServers.python("socks5-server.py", [String(config.socksPort)]))
+        procs.append(TestServers.python("socks5-server.py", [String(config.socksPort)]))   // stranger
         XCTAssertTrue(TestServers.waitForPort(config.socksPort))
 
         let second = TunnelManager(defaults: defaults, sshPath: fakeSSH)
@@ -153,9 +151,26 @@ final class TunnelManagerTests: XCTestCase {
         second.socksBasePort = first.socksBasePort
         second.start()
         second.connect(config.id)
-        XCTAssertTrue(wait { second.state(of: config.id) == .connected })
-        let moved = second.configs.first { $0.id == config.id }!
-        XCTAssertNotEqual(moved.socksPort, config.socksPort, "must not sit on the squatter's port")
+        XCTAssertTrue(wait { second.hasGivenUp(config.id) || { if case .reconnecting = second.state(of: config.id) { return true }; return false }() },
+                      "must fail, not adopt the stranger: \(second.state(of: config.id))")
+        XCTAssertEqual(second.configs.first { $0.id == config.id }?.socksPort, config.socksPort, "port must not move")
+        if case .reconnecting(let reason, _) = second.state(of: config.id) { XCTAssertTrue(reason.contains("in use"), reason) }
+        if case .gaveUp(let reason) = second.state(of: config.id) { XCTAssertTrue(reason.contains("in use"), reason) }
+        XCTAssertTrue(second.socksPortOwner(for: config.id)?.lowercased().contains("python") == true)
+    }
+
+    /// A sleeping tunnel still owns its ports: a new tunnel must not be given
+    /// them even though nothing is listening there right now.
+    func testNewTunnelNeverTakesASleepingTunnelsPorts() {
+        let m = TunnelManager(defaults: defaults, sshPath: fakeSSH)
+        manager = m
+        m.httpBasePort = TestServers.freePort(); m.socksBasePort = TestServers.freePort()
+        let asleep = m.add(target: "good-host")          // dormant: ports free at the OS level
+        XCTAssertTrue(wait { m.state(of: asleep.id) == .dormant })
+        XCTAssertFalse(TestServers.waitForPort(asleep.socksPort, seconds: 0.2), "precondition: nothing listening")
+        let fresh = m.add(target: "good-host")
+        XCTAssertNotEqual(fresh.socksPort, asleep.socksPort)
+        XCTAssertNotEqual(fresh.httpPort, asleep.httpPort)
     }
 
     /// A tunnel's HTTP port taken by the time it relaunches is reported with

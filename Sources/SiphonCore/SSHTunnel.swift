@@ -148,6 +148,14 @@ public final class SSHTunnel {
         state = .connecting
         stderr = Data()
 
+        // A listener already on our port cannot be us -- we just terminated.
+        // Launching anyway would have the readiness probe call the stranger's
+        // socket our tunnel. Fail now, with the port in the reason, so the menu
+        // can name the holder.
+        if Self.somethingListens(on: socksPort) {
+            failed("SOCKS port \(socksPort) is in use by another process"); return
+        }
+
         let p = Process()
         p.executableURL = URL(fileURLWithPath: sshPath)
         p.arguments = arguments
@@ -247,6 +255,25 @@ public final class SSHTunnel {
     }
 
     private func notify() { DispatchQueue.main.async { [onChange] in onChange?() } }
+
+    /// True when a bind to the port fails -- something else owns it.
+    static func somethingListens(on port: UInt16) -> Bool {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        var on: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int32>.size))
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let bound = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
+            }
+        }
+        return !bound
+    }
 
     /// TCP connect to the local port, 3 s budget.
     static func portOpen(_ port: UInt16, queue: DispatchQueue, completion: @escaping (Bool) -> Void) {

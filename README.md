@@ -109,9 +109,12 @@ What it does for you:
   system proxy off so traffic goes direct instead of failing, and turns it back
   on when that tunnel returns. Like all automatic writes, this runs only with
   passwordless sudo; otherwise the icon goes orange and waits for you.
-- **Occupied ports.** SOCKS ports are internal and are reassigned if taken.
-  HTTP ports are yours — exports refer to them — so a taken one is reported
-  (with what holds it) and moved only when you click the tunnel and agree.
+- **Ports are yours.** Each tunnel is assigned an HTTP port (from 7890) and a
+  SOCKS5 port (from 18081) when added, and keeps both for good — they end up in
+  exports and in the system proxy setting, so they never move underneath you,
+  even though a sleeping tunnel's SOCKS port is free at the OS level. A port
+  something else has taken is reported with the holder's name; the HTTP one can
+  be moved when you click the tunnel and agree.
 - **No stray ssh.** Children are stopped on Quit and on SIGTERM/SIGINT/SIGHUP;
   anything a crash leaves behind is reaped at the next launch.
 - **Host keys are verified** against your `known_hosts`. `BatchMode` means a
