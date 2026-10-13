@@ -221,3 +221,9 @@ with a real SOCKS5 server and origin, driven by curl (`--noproxy ""`, since a
 shell's `no_proxy` would otherwise route around the bridge); `SSHTunnel` and
 `TunnelManager` against a stand-in `ssh` that genuinely serves SOCKS5 on the
 `-D` port; one opt-in live test (`SIPHON_LIVE_SSH=<host>`).
+
+**On demand (2026-10-13).** Enabled tunnels are dormant: the bridge listens,
+ssh does not run. A request wakes ssh and waits; relayed bytes refresh an idle
+clock; 10 minutes without traffic stops ssh. Prompted by CPU use that turned
+out to be a bridge leak (relays never cancelled once a client vanished — 700+
+dead connections), fixed in the same change with paired teardown.

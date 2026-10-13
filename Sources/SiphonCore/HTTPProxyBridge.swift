@@ -11,17 +11,27 @@ public final class HTTPProxyBridge {
     public let port: UInt16
     public private(set) var isListening = false
     public var onStateChange: (() -> Void)?
+    /// Called (on the bridge queue) whenever bytes move through a relay, and
+    /// when a request arrives. Feeds the idle timer of an on-demand tunnel.
+    public var onActivity: (() -> Void)?
     /// Set when the listener could not bind — typically the port is taken.
     public private(set) var lastError: String?
 
-    private let upstream: () -> UInt16?
+    /// Resolves the SOCKS port to use for one request, possibly after bringing
+    /// a tunnel up; nil means no tunnel will be available.
+    public typealias UpstreamResolver = (@escaping (UInt16?) -> Void) -> Void
+    private let upstream: UpstreamResolver
     private let queue = DispatchQueue(label: "siphon.bridge")
     private var listener: NWListener?
-    private var connections = Set<ObjectIdentifier>()
 
-    public init(port: UInt16, upstream: @escaping () -> UInt16?) {
+    public init(port: UInt16, upstream: @escaping UpstreamResolver) {
         self.port = port
         self.upstream = upstream
+    }
+
+    /// Convenience for callers with an immediate answer (tests, always-on).
+    public convenience init(port: UInt16, upstream: @escaping () -> UInt16?) {
+        self.init(port: port) { done in done(upstream()) }
     }
 
     public func start() {
@@ -92,11 +102,15 @@ public final class HTTPProxyBridge {
             do { request = try HTTPProxyRequest.parse(Data(head)) } catch {
                 reply(client, "400 Bad Request"); return
             }
-            guard let socksPort = upstream() else {
-                reply(client, "503 No Tunnel Connected"); return
-            }
+            onActivity?()
             let (host, port) = request.kind.destination
-            SOCKS5Dialer.dial(socksPort: socksPort, host: host, port: port, queue: queue) { [weak self] result in
+            upstream { [weak self] socksPort in
+              self?.queue.async { [weak self] in
+                guard let self else { client.cancel(); return }
+                guard let socksPort else {
+                    reply(client, "503 No Tunnel Connected"); return
+                }
+                SOCKS5Dialer.dial(socksPort: socksPort, host: host, port: port, queue: queue) { [weak self] result in
                 guard let self else { return }
                 switch result {
                 case .failure:
@@ -112,9 +126,12 @@ public final class HTTPProxyBridge {
                     }
                     if !rest.isEmpty { origin.send(content: Data(rest), completion: .contentProcessed { _ in }) }
                     if !dialed.leftover.isEmpty { client.send(content: dialed.leftover, completion: .contentProcessed { _ in }) }
-                    pump(from: client, to: origin)
-                    pump(from: origin, to: client)
+                    let pair = ConnectionPair(client: client, origin: origin)
+                    pump(from: client, to: origin, pair: pair)
+                    pump(from: origin, to: client, pair: pair)
                 }
+                }
+              }
             }
         }
     }
@@ -127,21 +144,51 @@ public final class HTTPProxyBridge {
                     completion: .contentProcessed { _ in client.cancel() })
     }
 
-    /// Copies bytes one way until EOF, then half-closes the far side so the
-    /// other pump can drain and finish.
-    private func pump(from a: NWConnection, to b: NWConnection) {
+    /// Copies bytes one way until EOF. On EOF the far side is half-closed so
+    /// the other pump can drain, and the pair is torn down once both
+    /// directions are done -- or immediately on an error, since a peer that is
+    /// gone will never finish the other half. Without that teardown every
+    /// connection whose client vanished stayed open for good: hundreds of dead
+    /// NWConnections, each still costing bookkeeping. Each byte relayed also
+    /// reports activity, which is what keeps an on-demand tunnel awake.
+    private func pump(from a: NWConnection, to b: NWConnection, pair: ConnectionPair) {
         a.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
+            guard let self else { pair.closeBoth(); return }
             if let data, !data.isEmpty {
+                onActivity?()
                 b.send(content: data, completion: .contentProcessed { sendError in
-                    if sendError != nil { a.cancel(); b.cancel(); return }
-                    if isComplete || error != nil { b.send(content: nil, isComplete: true, completion: .contentProcessed { _ in }) }
-                    else { self?.pump(from: a, to: b) }
+                    if sendError != nil { pair.closeBoth(); return }
+                    if isComplete || error != nil { pair.halfDone(from: a, to: b, failed: error != nil) }
+                    else { self.pump(from: a, to: b, pair: pair) }
                 })
             } else if isComplete || error != nil {
-                b.send(content: nil, isComplete: true, completion: .contentProcessed { _ in })
+                pair.halfDone(from: a, to: b, failed: error != nil)
             } else {
-                self?.pump(from: a, to: b)
+                self.pump(from: a, to: b, pair: pair)
             }
+        }
+    }
+
+    /// The two sides of one relayed connection and how many directions have
+    /// finished. Cancelling an NWConnection is what frees it; a half-closed
+    /// one that is never cancelled is a leak.
+    final class ConnectionPair {
+        private let client: NWConnection, origin: NWConnection
+        private var finished = 0
+        private var closed = false
+        init(client: NWConnection, origin: NWConnection) { self.client = client; self.origin = origin }
+
+        func halfDone(from a: NWConnection, to b: NWConnection, failed: Bool) {
+            if failed { closeBoth(); return }
+            b.send(content: nil, isComplete: true, completion: .contentProcessed { _ in })
+            finished += 1
+            if finished >= 2 { closeBoth() }
+        }
+
+        func closeBoth() {
+            guard !closed else { return }
+            closed = true
+            client.cancel(); origin.cancel()
         }
     }
 }

@@ -159,7 +159,7 @@ public final class TunnelManager {
         notify()
     }
 
-    public func retry(_ id: UUID) { live[id]?.tunnel.retry() }
+    public func retry(_ id: UUID) { connect(id) }
 
     /// The default route moved: live sessions are stale, give-ups deserve a
     /// fresh start.
@@ -196,10 +196,21 @@ public final class TunnelManager {
         }
         let tunnel = SSHTunnel(target: config.target, socksPort: config.socksPort, sshPath: sshPath,
                                registry: registry)
+        tunnel.idleTimeout = idleTimeout
         tunnel.onChange = { [weak self] in self?.notify() }
         let bridge = makeBridge(for: config, tunnel: tunnel)
         live[config.id] = Live(tunnel: tunnel, bridge: bridge)
-        tunnel.start()
+        // On demand: enabled means "ready", not "connected". The first request
+        // through the bridge -- or an explicit connect -- brings ssh up.
+        tunnel.arm()
+    }
+
+    /// Connect now, without waiting for traffic (the menu's explicit action).
+    public func connect(_ id: UUID) { live[id]?.tunnel.wake { _ in } }
+
+    /// How long tunnels stay up with no traffic. Applied to live tunnels too.
+    public var idleTimeout: TimeInterval? = 10 * 60 {
+        didSet { live.values.forEach { $0.tunnel.idleTimeout = idleTimeout } }
     }
 
     private func stop(_ id: UUID) {
@@ -210,11 +221,14 @@ public final class TunnelManager {
 
     /// A bridge serves exactly its own tunnel: 503 while that tunnel is down,
     /// never a quiet detour through another one.
+    /// A bridge serves exactly its own tunnel. A request to a dormant tunnel
+    /// wakes it and waits; traffic through the bridge keeps it awake.
     private func makeBridge(for config: TunnelConfig, tunnel: SSHTunnel) -> HTTPProxyBridge {
-        let bridge = HTTPProxyBridge(port: config.httpPort) { [weak tunnel] in
-            guard let tunnel, tunnel.state == .connected else { return nil }
-            return tunnel.socksPort
+        let bridge = HTTPProxyBridge(port: config.httpPort) { [weak tunnel] (done: @escaping (UInt16?) -> Void) in
+            guard let tunnel else { done(nil); return }
+            tunnel.wake { ok in done(ok ? tunnel.socksPort : nil) }
         }
+        bridge.onActivity = { [weak tunnel] in tunnel?.touch() }
         bridge.onStateChange = { [weak self] in self?.notify() }
         bridge.start()
         return bridge

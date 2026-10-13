@@ -304,7 +304,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleTunnel(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID,
               let config = controller.tunnels.configs.first(where: { $0.id == id }) else { return }
-        controller.tunnels.setEnabled(id, !config.enabled)
+        if config.enabled {
+            controller.tunnels.setEnabled(id, false)
+        } else {
+            controller.tunnels.setEnabled(id, true)
+            controller.tunnels.connect(id)
+        }
     }
 
     @objc private func retryTunnel(_ sender: NSMenuItem) {
@@ -344,7 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             controller.moveTunnelProxyToFreePort(id)
         }
         if !config.enabled { tunnels.setEnabled(id, true) }
-        if case .gaveUp = tunnels.state(of: id) { tunnels.retry(id) }
+        tunnels.connect(id)
         controller.select(tunnels.proxyAddress(for: tunnels.configs.first { $0.id == id } ?? config))
     }
 
@@ -456,6 +461,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return "Couldn't apply"
         case nil:
             if controller.isSuspendedForTunnels { return "Paused · tunnel down" }
+            if let config = controller.tunnels.tunnel(forProxy: controller.server),
+               controller.tunnels.state(of: config.id) == .dormant {
+                return "\(primary.name) · tunnel asleep, wakes on use"
+            }
             return primary.name
         }
     }
@@ -507,6 +516,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 (color, detail) = (.systemOrange, "Reconnecting (\(attempt)/3): \(reason)")
             case .gaveUp(let reason):
                 (color, detail) = (.systemRed, "Gave up: \(reason) — click to retry")
+            case .dormant:
+                (color, detail) = (.systemGray, "Ready — connects on first use, sleeps after 10 min idle")
             case .idle:
                 (color, detail) = (config.enabled ? .systemYellow : .tertiaryLabelColor,
                                    config.enabled ? "Starting…" : "Disconnected — click to connect and use")

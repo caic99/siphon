@@ -95,6 +95,12 @@ In the menu, a tunnel row *is* that proxy:
 
 What it does for you:
 
+- **ssh runs only while you use it.** An enabled tunnel is *dormant*: its local
+  proxy listens, but no ssh process exists. The first request wakes ssh and
+  waits for it (a few seconds, not a 503); after 10 minutes without traffic
+  ssh is stopped and the tunnel sleeps again. Clicking a tunnel connects it at
+  once. A sleeping tunnel leaves the system proxy alone and ignores network
+  changes.
 - **Status you can trust.** A tunnel is connected only once its SOCKS port
   accepts a connection — ssh binds it after authentication, so no output is
   parsed. Health is re-checked every 45 s; a failed tunnel retries after 8 s,
@@ -112,7 +118,9 @@ What it does for you:
   host needing a password, 2FA or a first-time key confirmation fails fast
   with ssh's message in the tunnel's tooltip. Sign in once from a terminal.
 - **The bridge binds loopback only** and speaks plain HTTP proxy: `CONNECT`
-  for HTTPS, absolute-URI requests rewritten to origin-form for HTTP.
+  for HTTPS, absolute-URI requests rewritten to origin-form for HTTP. Relays
+  are torn down as soon as either side is gone, so idle browsers don't leave
+  hundreds of dead connections behind.
 
 The ssh handling is a native reimplementation of an earlier Python tool of
 mine, tunnelmux — same flags and retry cadence, minus its load balancing and

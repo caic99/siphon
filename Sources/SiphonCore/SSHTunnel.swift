@@ -12,6 +12,10 @@ import Network
 public final class SSHTunnel {
     public enum State: Equatable, Sendable {
         case idle
+        /// Enabled but not connected: ssh runs only while traffic wants it.
+        /// The next request wakes it; after `idleTimeout` without traffic it
+        /// returns here.
+        case dormant
         case connecting
         case connected
         /// Will retry; `reason` is ssh's own words where it gave any.
@@ -25,6 +29,9 @@ public final class SSHTunnel {
     public var healthInterval: TimeInterval = 45
     public var reconnectDelay: TimeInterval = 8
     public var maxRetries = 3
+    /// How long a connected tunnel may carry no traffic before ssh is
+    /// stopped. Nil keeps it up indefinitely (the old behaviour).
+    public var idleTimeout: TimeInterval? = 10 * 60
 
     public let target: String
     public let socksPort: UInt16
@@ -42,6 +49,10 @@ public final class SSHTunnel {
     private var retries = 0
     private var wanted = false
     private var pending: DispatchWorkItem?
+    private var idleTimer: DispatchWorkItem?
+    private var lastActivity = Date()
+    /// Callbacks waiting for the tunnel to come up on demand.
+    private var waiters: [(Bool) -> Void] = []
 
     public init(target: String, socksPort: UInt16, sshPath: String = "/usr/bin/ssh",
                 registry: ChildRegistry? = nil) {
@@ -68,18 +79,66 @@ public final class SSHTunnel {
     }
 
     public func start() { queue.async { [self] in wanted = true; retries = 0; launch() } }
-    public func stop() { queue.async { [self] in wanted = false; pending?.cancel(); terminate(); state = .idle } }
+
+    /// Mark the tunnel enabled without connecting. The first `wake` connects it.
+    public func arm() { queue.async { [self] in wanted = true; retries = 0; if state == .idle { state = .dormant } } }
+
+    /// Ensure the tunnel is up, connecting it if dormant or given up, and call
+    /// back with the outcome. Connected tunnels answer at once. Each call also
+    /// counts as activity for the idle timer.
+    public func wake(_ completion: @escaping (Bool) -> Void) {
+        queue.async { [self] in
+            touch()
+            switch state {
+            case .connected: completion(true)
+            case .connecting, .reconnecting: waiters.append(completion)
+            case .dormant, .idle, .gaveUp:
+                guard wanted else { completion(false); return }
+                waiters.append(completion); retries = 0; launch()
+            }
+        }
+    }
+
+    /// Traffic went through. Resets the idle clock.
+    public func touch() {
+        queue.async { [self] in
+            lastActivity = Date()
+            if state == .connected { scheduleIdleCheck() }
+        }
+    }
+
+    private func scheduleIdleCheck() {
+        idleTimer?.cancel()
+        guard let idleTimeout else { return }
+        let item = DispatchWorkItem { [weak self] in
+            guard let self, wanted, state == .connected else { return }
+            let quiet = Date().timeIntervalSince(lastActivity)
+            if quiet >= idleTimeout {
+                terminate(); connectedSince = nil; state = .dormant
+            } else {
+                scheduleIdleCheck()      // activity arrived meanwhile; re-arm from now
+            }
+        }
+        idleTimer = item
+        queue.asyncAfter(deadline: .now() + idleTimeout, execute: item)
+    }
+
+    private func resolveWaiters(_ ok: Bool) {
+        let list = waiters; waiters = []
+        list.forEach { $0(ok) }
+    }
+    public func stop() { queue.async { [self] in wanted = false; pending?.cancel(); terminate(); state = .idle; resolveWaiters(false) } }
 
     /// Stop and do not return until the child has been signalled. For process
     /// exit: an asynchronous stop queued just before `exit()` never runs, and
     /// the ssh child is orphaned with its tunnel still up -- which is exactly
     /// what happened on Quit before this existed.
     public func stopNow() {
-        queue.sync { [self] in wanted = false; pending?.cancel(); terminate(); state = .idle }
+        queue.sync { [self] in wanted = false; pending?.cancel(); terminate(); state = .idle; resolveWaiters(false) }
     }
     public func retry() { start() }
     /// The network moved: a live ssh session is probably dead or soon will be.
-    public func restart() { queue.async { [self] in guard wanted else { return }; retries = 0; terminate(); launch() } }
+    public func restart() { queue.async { [self] in guard wanted, state != .dormant else { return }; retries = 0; terminate(); launch() } }
 
     // MARK: - Lifecycle (all on `queue`)
 
@@ -123,6 +182,9 @@ public final class SSHTunnel {
             guard let self, wanted, state == .connecting else { return }
             if open {
                 retries = 0; connectedSince = Date(); state = .connected
+                lastActivity = Date()
+                scheduleIdleCheck()
+                resolveWaiters(true)
                 scheduleHealthCheck()
             } else if Date() >= deadline {
                 failed("SOCKS port did not open within \(Int(connectTimeout)) s")
@@ -160,7 +222,7 @@ public final class SSHTunnel {
         terminate()
         connectedSince = nil
         retries += 1
-        guard retries <= maxRetries else { state = .gaveUp(reason: reason); return }
+        guard retries <= maxRetries else { state = .gaveUp(reason: reason); resolveWaiters(false); return }
         state = .reconnecting(reason: reason, attempt: retries)
         schedule(after: reconnectDelay) { [weak self] in
             guard let self, wanted else { return }
@@ -170,6 +232,7 @@ public final class SSHTunnel {
 
     private func terminate() {
         pending?.cancel()
+        idleTimer?.cancel()
         guard let p = process else { return }
         process = nil
         if p.isRunning { p.terminate() }

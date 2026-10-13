@@ -18,6 +18,7 @@ final class LiveSSHTests: XCTestCase {
         defer { m.stopAll() }
         m.httpBasePort = TestServers.freePort()  // tunnelmux may hold 7890
         let config = m.add(target: host)
+        m.connect(config.id)
 
         let deadline = Date().addingTimeInterval(30)
         while Date() < deadline, m.state(of: config.id) != .connected {

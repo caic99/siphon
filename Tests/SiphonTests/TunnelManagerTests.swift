@@ -35,6 +35,7 @@ final class TunnelManagerTests: XCTestCase {
         let config = m.add(target: "good-host")
         XCTAssertEqual(config.socksPort, m.socksBasePort)
         XCTAssertEqual(config.httpPort, m.httpBasePort)
+        m.connect(config.id)
         XCTAssertTrue(wait { m.state(of: config.id) == .connected }, "\(m.state(of: config.id))")
         XCTAssertTrue(wait { m.proxyServer(for: config.id) != nil },
                       "bridge never listened: \(m.bridgeError(for: config.id) ?? "-")")
@@ -52,6 +53,7 @@ final class TunnelManagerTests: XCTestCase {
         let second = m.add(target: "good-host")
         XCTAssertGreaterThan(second.socksPort, config.socksPort)
         XCTAssertGreaterThan(second.httpPort, config.httpPort)
+        m.connect(second.id)
         XCTAssertTrue(wait { m.proxyServer(for: second.id) != nil })
 
         // Removing one takes only its own bridge down.
@@ -77,6 +79,7 @@ final class TunnelManagerTests: XCTestCase {
         second.start()
         XCTAssertNil(second.proxyServer(for: config.id), "disabled tunnels must not start")
         second.setEnabled(config.id, true)
+        second.connect(config.id)
         XCTAssertTrue(wait { second.state(of: config.id) == .connected })
     }
 
@@ -92,6 +95,7 @@ final class TunnelManagerTests: XCTestCase {
         XCTAssertTrue(TestServers.waitForPort(base))
         let config = m.add(target: "good-host")
         XCTAssertNotEqual(config.socksPort, base)
+        m.connect(config.id)
         XCTAssertTrue(wait { m.state(of: config.id) == .connected })
     }
 
@@ -135,6 +139,7 @@ final class TunnelManagerTests: XCTestCase {
         first.httpBasePort = TestServers.freePort()
         first.socksBasePort = TestServers.freePort()
         let config = first.add(target: "good-host")
+        first.connect(config.id)
         XCTAssertTrue(wait { first.state(of: config.id) == .connected })
         first.stopAll()
         XCTAssertTrue(wait(3) { !TestServers.waitForPort(config.socksPort, seconds: 0.2) })
@@ -147,6 +152,7 @@ final class TunnelManagerTests: XCTestCase {
         manager = second
         second.socksBasePort = first.socksBasePort
         second.start()
+        second.connect(config.id)
         XCTAssertTrue(wait { second.state(of: config.id) == .connected })
         let moved = second.configs.first { $0.id == config.id }!
         XCTAssertNotEqual(moved.socksPort, config.socksPort, "must not sit on the squatter's port")
@@ -159,6 +165,7 @@ final class TunnelManagerTests: XCTestCase {
         let first = TunnelManager(defaults: defaults, sshPath: fakeSSH)
         first.httpBasePort = TestServers.freePort(); first.socksBasePort = TestServers.freePort()
         let config = first.add(target: "good-host")
+        first.connect(config.id)
         XCTAssertTrue(wait { first.proxyServer(for: config.id) != nil })
         first.stopAll()
         XCTAssertTrue(wait(3) { !TestServers.waitForPort(config.httpPort, seconds: 0.2) })
@@ -200,12 +207,14 @@ final class TunnelManagerTests: XCTestCase {
         m.httpBasePort = TestServers.freePort()
         m.socksBasePort = TestServers.freePort()
         let bad = m.add(target: "fail-host")
+        m.connect(bad.id)
         XCTAssertFalse(m.hasGivenUp(bad.id), "still retrying")
         // Real retry pacing is 8 s x 3; waiting that out here proves the
         // real cadence rather than a shortened one.
         XCTAssertTrue(wait(40) { m.hasGivenUp(bad.id) }, "\(m.state(of: bad.id))")
         // Another tunnel's fate is its own.
         let good = m.add(target: "good-host")
+        m.connect(good.id)
         XCTAssertTrue(wait { m.state(of: good.id) == .connected })
         XCTAssertTrue(m.hasGivenUp(bad.id)); XCTAssertFalse(m.hasGivenUp(good.id))
     }
