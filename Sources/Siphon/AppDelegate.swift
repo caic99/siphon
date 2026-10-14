@@ -25,6 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var tunnelItems: [NSMenuItem] = []
     private var reapplyItem: NSMenuItem!
     private var serverItems: [NSMenuItem] = []
+    /// Internal so the screenshot harness can seed states for example hosts.
+    let reachability = ServerReachability()
     /// 54x24 down to 43x19 — proportionate to a menu row.
     private static let switchScale: CGFloat = 0.8
     /// Internal so the screenshot harness can pop up the real menu.
@@ -32,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         controller.onChange = { [weak self] in self?.refreshUI() }
+        reachability.onChange = { [weak self] in self?.refreshServerDots() }
         controller.onError = { [weak self] message in
             self?.showAlert("Couldn't change the proxy", message)
         }
@@ -613,16 +616,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let servers = controller.knownServers
         let labels = ServerLabels.labels(for: servers)
         for (offset, server) in servers.enumerated() {
-            let label = labels[offset]
-            let item = NSMenuItem(title: label, action: #selector(selectServer(_:)),
+            let item = NSMenuItem(title: labels[offset], action: #selector(selectServer(_:)),
                                   keyEquivalent: "")
             item.target = self
             item.representedObject = server
             item.state = server == controller.server ? .on : .off
-            // The row is shortened for width; the tooltip keeps the whole name.
-            item.toolTip = label == server.display ? nil : server.display
             menu.insertItem(item, at: insertionIndex + offset)
             serverItems.append(item)
+        }
+        refreshServerDots()
+        // Probes only on these refreshes (menu opening, a change), rate-limited
+        // in the prober itself; the answer lands through reachability.onChange.
+        reachability.check(servers)
+    }
+
+    /// The server rows' dots match the tunnel rows': green when the port
+    /// accepts, red when it does not, grey until known. Updated in place so a
+    /// probe answering while the menu is open does not rebuild it.
+    private func refreshServerDots() {
+        for item in serverItems {
+            guard let server = item.representedObject as? ProxyServer else { continue }
+            let (color, detail): (NSColor, String)
+            switch reachability.status(of: server) {
+            case .reachable(let latency):
+                (color, detail) = (.systemGreen, "Reachable · \(Int((latency * 1000).rounded())) ms")
+            case .unreachable(let reason):
+                (color, detail) = (.systemRed, "Unreachable: \(reason)")
+            case .checking:
+                (color, detail) = (.systemGray, "Checking…")
+            case .unknown:
+                (color, detail) = (.systemGray, "Not checked yet")
+            }
+            item.image = Self.stateDot(color)
+            // The row is shortened for width; the tooltip keeps the whole address.
+            item.toolTip = "\(detail)\n\(server.display)"
         }
     }
 }

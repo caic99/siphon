@@ -48,6 +48,10 @@ enum Screenshot {
         }
 
         let delegate = AppDelegate(controller: controller)
+        // Example hosts do not resolve; show the dots as they look on a working
+        // network rather than probing them and photographing two red ones.
+        delegate.reachability.seed(ProxyServer(host: "proxy-1.example.com", port: 3128), .reachable(latency: 0.012))
+        delegate.reachability.seed(ProxyServer(host: "proxy-2.example.com", port: 3128), .reachable(latency: 0.031))
         delegate.applicationDidFinishLaunching(Notification(name: Notification.Name(suite)))
         guard let menu = delegate.menu else { return }
 

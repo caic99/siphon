@@ -84,6 +84,10 @@ In the menu, a tunnel row *is* that proxy:
 
 - **Click** a tunnel to point the system proxy at it (connecting it first if it
   was off). ✓ marks the one in use; the dot shows state; hover for its ports.
+  Plain proxy servers carry the same dot: green when the address accepts a TCP
+  connection, red when it does not, checked when the menu opens (at most every
+  30 s, straight to the host, never through the proxy itself). Hover for the
+  latency or the reason.
   When a tunnel is the system proxy, its SOCKS5 port is written to the system's
   SOCKS proxy setting too, so apps that prefer SOCKS skip the HTTP bridge.
 - **Hold ⌥** and the rows become *Connect …* / *Disconnect …*.
