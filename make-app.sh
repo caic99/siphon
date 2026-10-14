@@ -15,6 +15,16 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/Siphon "$APP/Contents/MacOS/Siphon"
 
+# SwiftPM stamps the deployment target as the linked SDK version (otool -l
+# shows "sdk 13.0"). AppKit reads that stamp to choose a control design, so
+# the app was drawn in the pre-Tahoe style: a flat switch instead of the
+# Liquid Glass one. Restamp with the SDK actually used, as an Xcode build is.
+SDK_VERSION="$(xcrun --show-sdk-version)"
+vtool -set-build-version macos 13.0 "$SDK_VERSION" -replace \
+      -output "$APP/Contents/MacOS/Siphon.restamped" "$APP/Contents/MacOS/Siphon" 2>/dev/null
+mv "$APP/Contents/MacOS/Siphon.restamped" "$APP/Contents/MacOS/Siphon"
+chmod +x "$APP/Contents/MacOS/Siphon"
+
 # App icon. Siphon.icon is an Icon Composer document: vector layers that
 # macOS 26 renders as Liquid Glass at runtime (Assets.car), plus a pre-rendered
 # Siphon.icns for older systems. actool needs Xcode 26 or later; without it the

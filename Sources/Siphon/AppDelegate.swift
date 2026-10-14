@@ -242,8 +242,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return item
     }
 
+    /// Under the macOS 26 design, controls in an app that is not active draw
+    /// inactive: the header switch stays grey when on (measured in the real
+    /// menu; the same switch is blue once the app is active). A status item
+    /// menu never activates its app by itself, so activation is taken here and
+    /// handed back to whatever was in front when the menu closes. The older
+    /// call is deliberate: measured on macOS 27, `activate()` is not granted
+    /// from a status item click, while `activate(ignoringOtherApps:)` is.
+    private var appToReactivate: NSRunningApplication?
+
     func menuWillOpen(_ menu: NSMenu) {
         controller.refresh()
+        if #available(macOS 26.0, *), !NSApp.isActive {
+            appToReactivate = NSWorkspace.shared.frontmostApplication
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        guard let previous = appToReactivate else { return }
+        appToReactivate = nil
+        previous.activate()
     }
 
     // MARK: - Actions
@@ -447,6 +466,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshServerItems()
         refreshTunnelItems()
         reapplyItem.state = controller.reapplyOnNetworkChange ? .on : .off
+        keepImagesVisible(in: menu)
+    }
+
+    /// macOS 27 hides menu item images by default in apps linked on the macOS
+    /// 26 SDK or later. Siphon's images are meaning, not decoration: the state
+    /// dots are the only indication of a tunnel's or server's state. So every
+    /// image is explicitly kept.
+    private func keepImagesVisible(in menu: NSMenu) {
+        guard #available(macOS 27.0, *) else { return }
+        for item in menu.items {
+            if item.image != nil { item.preferredImageVisibility = .visible }
+            if let submenu = item.submenu { keepImagesVisible(in: submenu) }
+        }
     }
 
     /// The service line, or the reason the state is stuck — whichever the user

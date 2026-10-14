@@ -63,6 +63,12 @@ open build/Siphon.app
 The bundle is ad-hoc signed. To start Siphon at login, add it in
 System Settings → General → Login Items.
 
+`make-app.sh` also restamps the binary with the SDK it was built against.
+SwiftPM records the deployment target (13.0) as the linked SDK, and AppKit
+reads that stamp to pick a control design, so without the restamp the menu
+is drawn in the pre-Tahoe style on macOS 26 and later — a flat switch rather
+than the Liquid Glass one.
+
 ## SSH tunnels
 
 For hosts you can only reach over SSH, a tunnel can be the proxy. **Add SSH
@@ -245,6 +251,14 @@ gradient shows through it.
 It is the app's own menu, captured live — not a mock-up. The server names are
 examples: the capture runs against a throwaway defaults suite with discovery
 switched off, so no hostname from the machine that took it can appear.
+
+The capture opens the menu by clicking the status item with a synthetic mouse
+event rather than by popping the menu up programmatically: under the macOS 26
+design, controls in an app that is not active draw inactive (the switch is grey
+when on), and only a click on the status item lets a menu bar app activate.
+Siphon does the same when you open its menu, and hands activation back to the
+app that had it when the menu closes. Taking the screenshot therefore needs
+Accessibility access for the terminal that runs `--screenshot`.
 
 ## License
 
