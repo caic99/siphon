@@ -27,8 +27,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var serverItems: [NSMenuItem] = []
     /// Internal so the screenshot harness can seed states for example hosts.
     let reachability = ServerReachability()
-    /// 54x24 down to 43x19 — proportionate to a menu row.
-    private static let switchScale: CGFloat = 0.8
     /// Internal so the screenshot harness can pop up the real menu.
     var menu: NSMenu!
 
@@ -194,16 +192,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggle.setAccessibilityLabel("Proxy")
         toggle.sizeToFit()
 
-        // NSSwitch ignores controlSize — it is a fixed 54x24 at every setting,
-        // which is chunky next to 13pt menu text. Scaling the view's unit square
-        // shrinks the frame while the switch keeps drawing into its full 54x24
-        // bounds, so the artwork stays vector-sharp rather than being a
-        // resampled bitmap.
-        let natural = toggle.frame.size
-        toggle.scaleUnitSquare(to: NSSize(width: Self.switchScale, height: Self.switchScale))
-        let switchSize = NSSize(width: (natural.width * Self.switchScale).rounded(),
-                                height: (natural.height * Self.switchScale).rounded())
-        toggle.setFrameSize(switchSize)
+        // Left at its native size and drawing. Scaling it (scaleUnitSquare, as
+        // before) breaks the Liquid Glass switch: its knob is a glass lens
+        // drawn outside the scaled bounds, which showed as a stray ring and a
+        // knob drawn off the track.
+        let switchSize = toggle.frame.size
         toggle.setFrameOrigin(NSPoint(x: width - switchSize.width - margin,
                                       y: ((height - switchSize.height) / 2).rounded()))
         toggle.autoresizingMask = [.minXMargin]
