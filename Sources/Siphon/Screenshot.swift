@@ -40,8 +40,8 @@ enum Screenshot {
         let delegate = AppDelegate(controller: controller)
         // Example hosts do not resolve; show the dots as they look on a working
         // network rather than probing them and photographing two red ones.
-        delegate.reachability.seed(ProxyServer(host: "proxy-1.example.com", port: 3128), .reachable(latency: 0.012))
-        delegate.reachability.seed(ProxyServer(host: "proxy-2.example.com", port: 3128), .reachable(latency: 0.031))
+        controller.reachability.seed(ProxyServer(host: "proxy-1.example.com", port: 3128), .reachable(latency: 0.012))
+        controller.reachability.seed(ProxyServer(host: "proxy-2.example.com", port: 3128), .reachable(latency: 0.031))
         delegate.applicationDidFinishLaunching(Notification(name: Notification.Name(suite)))
         // The status item is placed by the system once the app is running its
         // event loop; before that its window has no meaningful frame.

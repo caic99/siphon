@@ -24,6 +24,13 @@ changed underneath it.
   enable flags, hosts, and ports) and carries the rest of each service's proxy
   dictionary through untouched — `ExceptionsList`, `ExcludeSimpleHostnames`,
   `FTPPassive`, SOCKS.
+- **Steps aside when the proxy is gone**: with auto re-apply on, the selected
+  proxy server is checked every 15 s and on every network change. If it stops
+  answering (two failed connects in a row, three seconds apart), the proxy is
+  turned off so traffic goes direct instead of failing, and the menu says
+  *Paused · proxy unreachable*. When the server answers again it is turned back
+  on. Turning the proxy on yourself while the server is down is respected until
+  the network changes or the server comes back; turning it off is never undone.
 - **Won't stomp a proxy it didn't set**: if a service already has a different
   proxy enabled, automatic re-apply stops and says so. An explicit click still
   goes through.
@@ -92,7 +99,8 @@ In the menu, a tunnel row *is* that proxy:
   was off). ✓ marks the one in use; the dot shows state; hover for its ports.
   Plain proxy servers carry the same dot: green when the address accepts a TCP
   connection, red when it does not, checked when the menu opens (at most every
-  30 s, straight to the host, never through the proxy itself). Hover for the
+  30 s, straight to the host, never through the proxy itself) and, for the
+  selected server, continuously while auto re-apply follows it. Hover for the
   latency or the reason.
   When a tunnel is the system proxy, its SOCKS5 port is written to the system's
   SOCKS proxy setting too, so apps that prefer SOCKS skip the HTTP bridge.

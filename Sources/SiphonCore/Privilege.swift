@@ -68,14 +68,22 @@ public final class PrivilegeRunner {
 
     private var silentByPath: [String: Bool] = [:]
 
-    public init() {}
+    /// Runs a program and reports its exit status and stderr. Injectable so
+    /// tests can record what would run instead of running it.
+    public typealias Executor = (_ path: String, _ arguments: [String], _ input: String?)
+        -> (status: Int32, errorText: String)
+    private let executor: Executor
+
+    public init(executor: Executor? = nil) {
+        self.executor = executor ?? Self.execute
+    }
 
     /// True when every path can run under `sudo` without a password prompt.
     /// Probed with `sudo -n -l`, which reports and exits rather than prompting.
     public func canRunSilently(_ paths: [String]) -> Bool {
         paths.allSatisfy { path in
             if let cached = silentByPath[path] { return cached }
-            let result = Self.execute(Self.sudo, ["-n", "-l", path], input: nil)
+            let result = executor(Self.sudo, ["-n", "-l", path], nil)
             let allowed = result.status == 0
             silentByPath[path] = allowed
             return allowed
@@ -90,8 +98,8 @@ public final class PrivilegeRunner {
         if canRunSilently(commands.map(\.path)) {
             var failure: String?
             for command in commands {
-                let result = Self.execute(Self.sudo, ["-n", command.path] + command.arguments,
-                                          input: command.input)
+                let result = executor(Self.sudo, ["-n", command.path] + command.arguments,
+                                          command.input)
                 if result.status != 0 {
                     failure = result.errorText.isEmpty
                         ? "\(command.path) exited \(result.status)"
@@ -113,7 +121,7 @@ public final class PrivilegeRunner {
     }
 
     private func runWithPrompt(_ commands: [PrivilegedCommand]) -> PrivilegeOutcome {
-        let result = Self.execute(Self.osascript, ["-e", Shell.adminScript(for: commands)], input: nil)
+        let result = executor(Self.osascript, ["-e", Shell.adminScript(for: commands)], nil)
         if result.status == 0 { return .success }
         // osascript reports a dismissed authorization dialog as error -128.
         if result.errorText.contains("-128") || result.errorText.contains("User canceled") {

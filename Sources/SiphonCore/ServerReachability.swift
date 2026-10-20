@@ -6,9 +6,9 @@ import Network
 ///
 /// A TCP connect is the whole test: the proxy is a service someone else runs,
 /// and a port that accepts is the most Siphon can tell without sending traffic
-/// through it. Probes go out when asked (the menu opening, the list changing),
-/// never on a timer, and no more than once per `minimumInterval` per server, so
-/// an idle app makes no connections at all.
+/// through it. Probes go out when asked: the menu opening or the list changing
+/// (no more than once per `minimumInterval` per server), and the controller's
+/// watch on the selected server while auto re-apply follows it.
 public final class ServerReachability {
     public enum Status: Equatable {
         /// Never probed, or the list changed before the first answer.
@@ -20,6 +20,9 @@ public final class ServerReachability {
 
     /// Fired on the main queue whenever any status changes.
     public var onChange: (() -> Void)?
+    /// Fired on the main queue for every finished probe, changed or not, so a
+    /// caller can count consecutive failures.
+    public var onResult: ((ProxyServer, Status) -> Void)?
     public var minimumInterval: TimeInterval = 30
     public var timeout: TimeInterval = 3
 
@@ -27,6 +30,9 @@ public final class ServerReachability {
 
     private var statuses: [ProxyServer: Status] = [:]
     private var lastChecked: [ProxyServer: Date] = [:]
+    /// Probes out right now. Tracked apart from the status, which keeps showing
+    /// the previous answer while a re-probe is out.
+    private var inFlight: Set<ProxyServer> = []
     private let prober: Prober
     private let queue = DispatchQueue(label: "com.chucai.siphon.reachability")
 
@@ -46,19 +52,32 @@ public final class ServerReachability {
         lastChecked = lastChecked.filter { keep.contains($0.key) }
         let now = Date()
         for server in servers {
-            if case .checking = status(of: server) { continue }
             if !force, let last = lastChecked[server], now.timeIntervalSince(last) < minimumInterval { continue }
-            lastChecked[server] = now
-            // Keep the last answer visible while the new probe is out; a dot
-            // that flickers grey on every menu open says nothing useful.
-            if case .unknown = status(of: server) { set(server, .checking) }
-            prober(server, timeout) { [weak self] result in
-                DispatchQueue.main.async {
-                    // A server dropped from the list while its probe was out
-                    // stays forgotten.
-                    guard let self, self.statuses[server] != nil else { return }
-                    self.set(server, result)
-                }
+            launch(server)
+        }
+    }
+
+    /// Probe one server now, leaving every other server's status alone.
+    public func probe(_ server: ProxyServer) {
+        launch(server)
+    }
+
+    private func launch(_ server: ProxyServer) {
+        guard !inFlight.contains(server) else { return }
+        inFlight.insert(server)
+        lastChecked[server] = Date()
+        // Keep the last answer visible while the new probe is out; a dot
+        // that flickers grey on every menu open says nothing useful.
+        if case .unknown = status(of: server) { set(server, .checking) }
+        prober(server, timeout) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.inFlight.remove(server)
+                // A server dropped from the list while its probe was out
+                // stays forgotten.
+                guard self.statuses[server] != nil else { return }
+                self.set(server, result)
+                self.onResult?(server, result)
             }
         }
     }

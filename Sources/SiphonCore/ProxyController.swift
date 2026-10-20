@@ -25,7 +25,15 @@ public final class ProxyController {
         static let customServers = "customServers"
         static let reapply = "reapplyOnNetworkChange"
         static let touched = "touchedServices"
+        static let suspendedUnreachable = "suspendedForUnreachableServer"
     }
+
+    /// How often the selected server is probed while auto re-apply follows
+    /// it: the steady check, the faster one while waiting for it to return,
+    /// and the delay before confirming a first failure.
+    public var watchInterval: TimeInterval = 15
+    public var suspendedWatchInterval: TimeInterval = 10
+    public var confirmDelay: TimeInterval = 3
 
     private let defaults: UserDefaults
     private let runner: PrivilegeRunner
@@ -38,6 +46,23 @@ public final class ProxyController {
     /// fires on proxy-key changes — including Siphon's own writes — and those
     /// must not restart ssh sessions; only a genuinely new route should.
     private var lastRouteOwner: String?
+
+    /// Probes plain proxy servers; the menu's dots read it too.
+    public let reachability: ServerReachability
+    /// Fired when any server's reachability changes, for the dots. Kept apart
+    /// from `onChange` so a probe answering does not rebuild the open menu.
+    public var onReachabilityChange: (() -> Void)?
+    /// Follows the selected plain server while auto re-apply is on. Its
+    /// suspension is persisted: a proxy paused for an unreachable server must
+    /// still come back after a relaunch.
+    private var watchdog: ReachabilityWatchdog {
+        didSet { defaults.set(watchdog.suspended, forKey: Key.suspendedUnreachable) }
+    }
+    private var watchedServer: ProxyServer?
+    private var watchTimer: DispatchSourceTimer?
+    private var watchTimerInterval: TimeInterval = 0
+    private var confirmation: DispatchWorkItem?
+    private var started = false
 
     public var onChange: (() -> Void)?
     public var onError: ((String) -> Void)?
@@ -69,11 +94,14 @@ public final class ProxyController {
     public init(defaults: UserDefaults = ProxyController.sharedDefaults(),
                 runner: PrivilegeRunner = PrivilegeRunner(),
                 discoversServers: Bool = true,
-                sshPath: String = "/usr/bin/ssh") {
+                sshPath: String = "/usr/bin/ssh",
+                reachabilityProber: ServerReachability.Prober? = nil) {
         self.defaults = defaults
         self.runner = runner
         self.discoversServers = discoversServers
         self.tunnels = TunnelManager(defaults: defaults, sshPath: sshPath)
+        self.reachability = ServerReachability(prober: reachabilityProber)
+        self.watchdog = ReachabilityWatchdog(suspended: defaults.bool(forKey: Key.suspendedUnreachable))
     }
 
     // MARK: - Persisted settings
@@ -90,6 +118,10 @@ public final class ProxyController {
         }
         set {
             defaults.set(newValue, forKey: Key.reapply)
+            // Turning it off ends a pause without turning the proxy back on:
+            // the server is still unreachable, and auto is what was asked to stop.
+            if !newValue { watchdog.reset() }
+            updateWatch(probeNow: newValue)
             onChange?()
         }
     }
@@ -141,11 +173,18 @@ public final class ProxyController {
         lastRouteOwner = primary.map { "\($0.serviceID)|\($0.interface)" }
         refreshServers()
         _ = reconcile(trigger: .automatic)
+        reachability.onChange = { [weak self] in self?.onReachabilityChange?() }
+        reachability.onResult = { [weak self] server, status in self?.probeFinished(server, status) }
+        started = true
+        updateWatch(probeNow: true)
         onChange?()
     }
 
     /// Call at quit: ssh children must not outlive the app.
-    public func shutdown() { tunnels.stopAll() }
+    public func shutdown() {
+        watchTimer?.cancel()
+        tunnels.stopAll()
+    }
 
     /// Live read. Everything the UI shows comes from here, never from what a
     /// write was expected to accomplish.
@@ -236,10 +275,12 @@ public final class ProxyController {
         customServers.removeAll { $0 == old }
         if server == old { server = nil }
         refreshServers()
+        updateWatch()
         onChange?()
     }
 
     public func select(_ newServer: ProxyServer) {
+        if newServer != server { watchdog.serverChanged() }
         server = newServer
         // Remember every server that gets used, not just typed-in ones.
         // Discovery only sees what is configured *now*, so switching away from
@@ -247,6 +288,14 @@ public final class ProxyController {
         // way back to it except retyping it under Custom….
         remember(newServer)
         refreshServers()
+        // A pause carries over to a newly picked server, which goes into force
+        // when it answers. A tunnel has its own rule, so picking one while
+        // paused simply means using it.
+        if watchdog.suspended, tunnels.isTunnelProxy(newServer) {
+            watchdog.reset()
+            desiredOn = true
+        }
+        updateWatch(probeNow: true)
         if desiredOn {
             finish(reconcile(trigger: .userClick), revertingTo: desiredOn)
         } else {
@@ -257,8 +306,15 @@ public final class ProxyController {
     private func setDesired(_ on: Bool) {
         let previous = desiredOn
         suspendedForTunnels = false   // the user decided; stop second-guessing
+        watchdog.userSet(on: on, serverKnownUnreachable: selectedServerKnownUnreachable)
         desiredOn = on
         finish(reconcile(trigger: .userClick), revertingTo: previous)
+        updateWatch(probeNow: on)
+    }
+
+    private var selectedServerKnownUnreachable: Bool {
+        guard let server, case .unreachable = reachability.status(of: server) else { return false }
+        return true
     }
 
     /// Cancelling the admin dialog cancels the action, switch included — but
@@ -279,12 +335,96 @@ public final class ProxyController {
         if owner != lastRouteOwner {
             lastRouteOwner = owner
             tunnels.networkChanged()
+            watchdog.networkChanged()
         }
         refreshServers()
         if reapplyOnNetworkChange {
             _ = reconcile(trigger: .automatic)
         }
+        // A network change is the usual reason a proxy comes and goes (a VPN
+        // dropping, leaving the office), so ask at once rather than at the
+        // next tick.
+        updateWatch(probeNow: true)
         onChange?()
+    }
+
+    // MARK: - Following the selected server
+
+    /// True while the switch is off only because the selected server stopped
+    /// answering; it turns back on when the server does.
+    public var isSuspendedForUnreachableServer: Bool { watchdog.suspended }
+
+    /// The server to watch: the selected plain server, while auto re-apply is
+    /// on and the proxy is on or paused for it. Tunnels have their own rule.
+    private var watchTarget: ProxyServer? {
+        guard reapplyOnNetworkChange, let server, !tunnels.isTunnelProxy(server),
+              desiredOn || watchdog.suspended else { return nil }
+        return server
+    }
+
+    private func updateWatch(probeNow: Bool = false) {
+        guard started else { return }
+        let target = watchTarget
+        if target != watchedServer {
+            watchedServer = target
+            confirmation?.cancel()
+        }
+        guard let target else {
+            watchTimer?.cancel()
+            watchTimer = nil
+            // Nothing to follow any more, so nothing to come back for.
+            if watchdog.suspended, !reapplyOnNetworkChange || server.map(tunnels.isTunnelProxy) ?? true {
+                watchdog.reset()
+            }
+            return
+        }
+        let interval = watchdog.suspended ? suspendedWatchInterval : watchInterval
+        if watchTimer == nil || watchTimerInterval != interval {
+            watchTimer?.cancel()
+            let timer = DispatchSource.makeTimerSource(queue: .main)
+            timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .seconds(1))
+            timer.setEventHandler { [weak self] in
+                guard let self, let watched = self.watchedServer else { return }
+                self.reachability.probe(watched)
+            }
+            timer.resume()
+            watchTimer = timer
+            watchTimerInterval = interval
+        }
+        if probeNow { reachability.probe(target) }
+    }
+
+    private func probeFinished(_ probed: ProxyServer, _ status: ServerReachability.Status) {
+        guard probed == watchedServer else { return }
+        let reachable: Bool
+        switch status {
+        case .reachable: reachable = true
+        case .unreachable: reachable = false
+        case .unknown, .checking: return
+        }
+        switch watchdog.probed(reachable: reachable, proxyOn: desiredOn) {
+        case .none:
+            break
+        case .confirmSoon:
+            confirmation?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.watchedServer == probed else { return }
+                self.reachability.probe(probed)
+            }
+            confirmation = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + confirmDelay, execute: work)
+        case .suspend:
+            // Automatic, like every unattended write: silent sudo or the
+            // orange "waiting for you" state, never a password dialog.
+            desiredOn = false
+            _ = reconcile(trigger: .automatic)
+            onChange?()
+        case .resume:
+            desiredOn = true
+            _ = reconcile(trigger: .automatic)
+            onChange?()
+        }
+        updateWatch()
     }
 
     // MARK: - Tunnels
@@ -311,6 +451,7 @@ public final class ProxyController {
         } else {
             suspendedForTunnels = false
         }
+        updateWatch()
         onChange?()
     }
 

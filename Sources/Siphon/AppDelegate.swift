@@ -25,14 +25,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var tunnelItems: [NSMenuItem] = []
     private var reapplyItem: NSMenuItem!
     private var serverItems: [NSMenuItem] = []
-    /// Internal so the screenshot harness can seed states for example hosts.
-    let reachability = ServerReachability()
+    private var reachability: ServerReachability { controller.reachability }
     /// Internal so the screenshot harness can pop up the real menu.
     var menu: NSMenu!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         controller.onChange = { [weak self] in self?.refreshUI() }
-        reachability.onChange = { [weak self] in self?.refreshServerDots() }
+        controller.onReachabilityChange = { [weak self] in self?.refreshServerDots() }
         controller.onError = { [weak self] message in
             self?.showAlert("Couldn't change the proxy", message)
         }
@@ -489,6 +488,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return "Couldn't apply"
         case nil:
             if controller.isSuspendedForTunnels { return "Paused · tunnel down" }
+            if controller.isSuspendedForUnreachableServer { return "Paused · proxy unreachable" }
             if let config = controller.tunnels.tunnel(forProxy: controller.server),
                controller.tunnels.state(of: config.id) == .dormant {
                 return "\(primary.name) · tunnel asleep, wakes on use"
