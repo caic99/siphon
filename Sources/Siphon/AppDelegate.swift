@@ -465,12 +465,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 26 SDK or later. Siphon's images are meaning, not decoration: the state
     /// dots are the only indication of a tunnel's or server's state. So every
     /// image is explicitly kept.
+    ///
+    /// `preferredImageVisibility` exists only in the macOS 27 SDK, which ships
+    /// with Swift 6.4; `#available` is a runtime check and cannot hide it from
+    /// an older compiler (CI builds with the macOS 26 SDK). A binary built on
+    /// the 26 SDK is not subject to the hiding anyway.
     private func keepImagesVisible(in menu: NSMenu) {
+        #if compiler(>=6.4)
         guard #available(macOS 27.0, *) else { return }
         for item in menu.items {
             if item.image != nil { item.preferredImageVisibility = .visible }
             if let submenu = item.submenu { keepImagesVisible(in: submenu) }
         }
+        #endif
     }
 
     /// The service line, or the reason the state is stuck — whichever the user
